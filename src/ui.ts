@@ -1,5 +1,11 @@
-import type { Body } from "matter-js";
-import { SHAPE_TYPES, type ShapeType } from "./shapes";
+import type { Body } from "planck";
+import { JOINT_TYPES, type JointType } from "./joints";
+import { bodyBoundsPx } from "./physics";
+import { getBodyData, SHAPE_TYPES, type ShapeType } from "./shapes";
+
+export type ActiveTool =
+  | { kind: "shape"; shape: ShapeType }
+  | { kind: "joint"; joint: JointType };
 
 export interface UiOptions {
   onGravityChange(x: number, y: number): void;
@@ -10,6 +16,7 @@ export interface UiOptions {
 
 export interface Ui {
   getSelectedShape(): ShapeType;
+  getActiveTool(): ActiveTool;
   /** Show (or hide, when null) the readout for the currently selected body. */
   showSelectionInfo(body: Body | null): void;
   /** Reflect the current paused state on the toggle button. */
@@ -18,6 +25,10 @@ export interface Ui {
 
 function isShapeType(value: string | undefined): value is ShapeType {
   return SHAPE_TYPES.includes(value as ShapeType);
+}
+
+function isJointType(value: string | undefined): value is JointType {
+  return JOINT_TYPES.includes(value as JointType);
 }
 
 function requireElement<T extends HTMLElement>(id: string): T {
@@ -30,6 +41,7 @@ function requireElement<T extends HTMLElement>(id: string): T {
 
 export function setupUi({ onGravityChange, onBackgroundChange, onPauseToggle }: UiOptions): Ui {
   let selectedShape: ShapeType = "circle";
+  let activeTool: ActiveTool = { kind: "shape", shape: selectedShape };
 
   // Pause / Play
   let paused = false;
@@ -51,20 +63,45 @@ export function setupUi({ onGravityChange, onBackgroundChange, onPauseToggle }: 
     onPauseToggle(!paused);
   });
 
-  // Shape selection
+  // Shape / joint tools (mutually exclusive)
   const shapeButtons = Array.from(
     document.querySelectorAll<HTMLButtonElement>(".shape-btn[data-shape]"),
   );
+  const jointButtons = Array.from(
+    document.querySelectorAll<HTMLButtonElement>(".joint-btn[data-joint]"),
+  );
+
+  function syncToolButtons(): void {
+    for (const button of shapeButtons) {
+      button.classList.toggle(
+        "is-active",
+        activeTool.kind === "shape" && button.dataset.shape === activeTool.shape,
+      );
+    }
+    for (const button of jointButtons) {
+      button.classList.toggle(
+        "is-active",
+        activeTool.kind === "joint" && button.dataset.joint === activeTool.joint,
+      );
+    }
+  }
 
   for (const button of shapeButtons) {
     button.addEventListener("click", () => {
       const shape = button.dataset.shape;
       if (!isShapeType(shape)) return;
-
       selectedShape = shape;
-      for (const other of shapeButtons) {
-        other.classList.toggle("is-active", other === button);
-      }
+      activeTool = { kind: "shape", shape };
+      syncToolButtons();
+    });
+  }
+
+  for (const button of jointButtons) {
+    button.addEventListener("click", () => {
+      const joint = button.dataset.joint;
+      if (!isJointType(joint)) return;
+      activeTool = { kind: "joint", joint };
+      syncToolButtons();
     });
   }
 
@@ -104,18 +141,21 @@ export function setupUi({ onGravityChange, onBackgroundChange, onPauseToggle }: 
       selectionInfo.hidden = true;
       return;
     }
-    const width = body.bounds.max.x - body.bounds.min.x;
-    const height = body.bounds.max.y - body.bounds.min.y;
+    const { min, max } = bodyBoundsPx(body);
+    const width = max.x - min.x;
+    const height = max.y - min.y;
+    const data = getBodyData(body);
     selectionInfo.hidden = false;
-    selectionShape.textContent = body.label.replace(/ Body$/, "");
+    selectionShape.textContent = (data?.label ?? "Body").replace(/ Body$/, "");
     selectionSize.textContent = `${Math.round(width)} x ${Math.round(height)} px`;
-    selectionMass.textContent = body.mass.toFixed(2);
-    const degrees = (((body.angle * 180) / Math.PI) % 360 + 360) % 360;
+    selectionMass.textContent = body.getMass().toFixed(2);
+    const degrees = (((body.getAngle() * 180) / Math.PI) % 360 + 360) % 360;
     selectionAngle.textContent = `${Math.round(degrees)}\u00B0`;
   }
 
   return {
     getSelectedShape: () => selectedShape,
+    getActiveTool: () => activeTool,
     showSelectionInfo,
     setPaused,
   };

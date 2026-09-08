@@ -25,11 +25,15 @@ const ui = setupUi({
 });
 
 const input = setupInput({
-  engine: physics.engine,
-  render: physics.render,
+  world: physics.world,
+  ground: physics.ground,
+  canvas: physics.canvas,
+  getSize: () => physics.getSize(),
   isPaused: () => physics.isPaused(),
-  getSelectedShape: () => ui.getSelectedShape(),
+  getActiveTool: () => ui.getActiveTool(),
   onSelectionUpdate: (body) => ui.showSelectionInfo(body),
+  onAfterRender: (cb) => physics.onAfterRender(cb),
+  bodyAt: (point) => physics.bodyAt(point),
 });
 
 ui.setPaused(physics.isPaused());
