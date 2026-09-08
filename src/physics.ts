@@ -187,15 +187,27 @@ export function createPhysics(container: HTMLElement): Physics {
     ctx.save();
     ctx.fillStyle = JOINT_ACCENT;
     ctx.strokeStyle = JOINT_ACCENT;
-    if (data?.kind === "rod") {
+    if (data?.kind === "rod" || data?.kind === "weld" || data?.kind === "wheel") {
+      let x1 = ax;
+      let y1 = ay;
+      let x2 = bx;
+      let y2 = by;
+      if (data.localA && data.localB) {
+        const wa = joint.getBodyA().getWorldPoint(data.localA);
+        const wb = joint.getBodyB().getWorldPoint(data.localB);
+        x1 = toPixels(wa.x);
+        y1 = toPixels(wa.y);
+        x2 = toPixels(wb.x);
+        y2 = toPixels(wb.y);
+      }
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.moveTo(ax, ay);
-      ctx.lineTo(bx, by);
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(ax, ay, 3.5, 0, Math.PI * 2);
-      ctx.arc(bx, by, 3.5, 0, Math.PI * 2);
+      ctx.arc(x1, y1, 3.5, 0, Math.PI * 2);
+      ctx.arc(x2, y2, 3.5, 0, Math.PI * 2);
       ctx.fill();
     } else {
       ctx.beginPath();

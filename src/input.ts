@@ -1,5 +1,5 @@
 import { MouseJoint, type Body, type World } from "planck";
-import { createPin, createRevolute, createRod, type JointType } from "./joints";
+import { createPin, createRevolute, createRod, createWeld, createWheel, type JointType } from "./joints";
 import type { AfterRender } from "./physics";
 import { createSelection, type Selection } from "./selection";
 import {
@@ -82,7 +82,7 @@ export function setupInput({
   let draft: Point[] = [];
   /** Cursor position for rubber-band previews (polygon draft or pending joint). */
   let hover: Point | null = null;
-  /** First attachment of a two-click joint (revolute / rod). */
+  /** First attachment of a two-click joint (revolute / rod / weld / wheel). */
   let jointAnchor: { body: Body; point: Point } | null = null;
 
   function canvasPoint(event: MouseEvent): Point {
@@ -110,7 +110,7 @@ export function setupInput({
   }
 
   function isTwoClickJoint(type: JointType): boolean {
-    return type === "revolute" || type === "rod";
+    return type === "revolute" || type === "rod" || type === "weld" || type === "wheel";
   }
 
   function applyCursor(): void {
@@ -211,6 +211,10 @@ export function setupInput({
     if (jointAnchor.body === body) return;
     if (type === "revolute") {
       createRevolute(world, jointAnchor.body, jointAnchor.point, body, point);
+    } else if (type === "weld") {
+      createWeld(world, jointAnchor.body, jointAnchor.point, body, point);
+    } else if (type === "wheel") {
+      createWheel(world, jointAnchor.body, jointAnchor.point, body, point);
     } else {
       createRod(world, jointAnchor.body, jointAnchor.point, body, point);
     }

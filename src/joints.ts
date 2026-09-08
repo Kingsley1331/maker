@@ -1,10 +1,10 @@
-import { DistanceJoint, RevoluteJoint, type Body, type Joint, type World } from "planck";
+import { DistanceJoint, RevoluteJoint, WeldJoint, WheelJoint, type Body, type Joint, type World } from "planck";
 import type { JointUserData } from "./shapes";
 import { vecToMeters, type Point } from "./units";
 
-export type JointType = "pin" | "revolute" | "rod";
+export type JointType = "pin" | "revolute" | "rod" | "weld" | "wheel";
 
-export const JOINT_TYPES: JointType[] = ["pin", "revolute", "rod"];
+export const JOINT_TYPES: JointType[] = ["pin", "revolute", "rod", "weld", "wheel"];
 
 /** Pin a body to the world at `world` (pixels). The body can still rotate around that point. */
 export function createPin(world: World, ground: Body, body: Body, worldPt: Point): Joint | null {
@@ -67,6 +67,77 @@ export function createRod(
       bodyB,
       vecToMeters(pointA),
       vecToMeters(pointB),
+    ),
+  );
+}
+
+/**
+ * Rigid bar between two points that also locks relative rotation (a rod that cannot pivot).
+ * Physics is a weld of the current pose at the midpoint so the bodies are not yanked together.
+ */
+export function createWeld(
+  world: World,
+  bodyA: Body,
+  pointA: Point,
+  bodyB: Body,
+  pointB: Point,
+): Joint | null {
+  const a = vecToMeters(pointA);
+  const b = vecToMeters(pointB);
+  const midpoint = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  const localA = bodyA.getLocalPoint(a);
+  const localB = bodyB.getLocalPoint(b);
+  return world.createJoint(
+    new WeldJoint(
+      {
+        collideConnected: true,
+        frequencyHz: 0,
+        userData: { kind: "weld", localA, localB } satisfies JointUserData,
+      },
+      bodyA,
+      bodyB,
+      midpoint,
+    ),
+  );
+}
+
+/**
+ * Wheel: first click is the chassis, second is the hub. The wheel can spin and slide along
+ * the line from the first click to the second (suspension). If the clicks coincide, the axis
+ * is straight up on the canvas.
+ */
+export function createWheel(
+  world: World,
+  bodyA: Body,
+  pointA: Point,
+  bodyB: Body,
+  pointB: Point,
+): Joint | null {
+  const a = vecToMeters(pointA);
+  const b = vecToMeters(pointB);
+  let axis = { x: b.x - a.x, y: b.y - a.y };
+  const len = Math.hypot(axis.x, axis.y);
+  if (len < 1e-4) {
+    axis = { x: 0, y: -1 };
+  } else {
+    axis = { x: axis.x / len, y: axis.y / len };
+  }
+  return world.createJoint(
+    new WheelJoint(
+      {
+        collideConnected: false,
+        frequencyHz: 4,
+        dampingRatio: 0.7,
+        userData: {
+          kind: "wheel",
+          localA: bodyA.getLocalPoint(a),
+          localB: bodyB.getLocalPoint(b),
+        } satisfies JointUserData,
+      },
+      bodyA,
+      bodyB,
+      b,
+      axis,
     ),
   );
 }

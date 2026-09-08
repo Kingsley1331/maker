@@ -75,6 +75,21 @@
               <line x1="8.5" y1="12" x2="15.5" y2="12" stroke="currentColor" stroke-width="2.5" />
             </svg>
           </button>
+          <button class="joint-btn" data-joint="weld" title="Weld (no rotation)" aria-label="Weld (no rotation)">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="1.5" y="8.5" width="7" height="7" fill="currentColor" />
+              <rect x="15.5" y="8.5" width="7" height="7" fill="currentColor" />
+              <line x1="8.5" y1="12" x2="15.5" y2="12" stroke="currentColor" stroke-width="2.5" />
+            </svg>
+          </button>
+          <button class="joint-btn" data-joint="wheel" title="Wheel joint" aria-label="Wheel joint">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="4" y="3" width="16" height="5" rx="1" fill="currentColor" />
+              <line x1="12" y1="8" x2="12" y2="14" stroke="currentColor" stroke-width="2" />
+              <circle cx="12" cy="17" r="4" fill="none" stroke="currentColor" stroke-width="2" />
+              <circle cx="12" cy="17" r="1.5" fill="currentColor" />
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -116,8 +131,11 @@
         throw it. While paused, press a shape to select it and drag to move it; drag the corner
         handles to resize and the top knob to rotate (hold Shift to snap). Click empty space or
         press Escape to deselect. Pause and pick a joint tool to connect bodies: pin attaches a
-        body to the world at the click; revolute and rod take two clicks on different bodies.
-        Escape or a click on empty space cancels a pending second click.
+        body to the world at the click; revolute, rod, weld, and wheel take two clicks on
+        different bodies. A weld is a rod that does not allow rotation at the ends. A wheel
+        attaches a spinning hub (second click) to a chassis (first click) with suspension
+        along the line between clicks. Escape or a click on empty space cancels a pending
+        second click.
       </p>
       </div>
 
