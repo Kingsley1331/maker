@@ -1,6 +1,7 @@
-import type { Body } from "matter-js";
+import type { Body } from "planck";
 import { JOINT_TYPES, type JointType } from "./joints";
-import { SHAPE_TYPES, type ShapeType } from "./shapes";
+import { bodyBoundsPx } from "./physics";
+import { getBodyData, SHAPE_TYPES, type ShapeType } from "./shapes";
 
 export type ActiveTool =
   | { kind: "shape"; shape: ShapeType }
@@ -140,13 +141,15 @@ export function setupUi({ onGravityChange, onBackgroundChange, onPauseToggle }: 
       selectionInfo.hidden = true;
       return;
     }
-    const width = body.bounds.max.x - body.bounds.min.x;
-    const height = body.bounds.max.y - body.bounds.min.y;
+    const { min, max } = bodyBoundsPx(body);
+    const width = max.x - min.x;
+    const height = max.y - min.y;
+    const data = getBodyData(body);
     selectionInfo.hidden = false;
-    selectionShape.textContent = body.label.replace(/ Body$/, "");
+    selectionShape.textContent = (data?.label ?? "Body").replace(/ Body$/, "");
     selectionSize.textContent = `${Math.round(width)} x ${Math.round(height)} px`;
-    selectionMass.textContent = body.mass.toFixed(2);
-    const degrees = (((body.angle * 180) / Math.PI) % 360 + 360) % 360;
+    selectionMass.textContent = body.getMass().toFixed(2);
+    const degrees = (((body.getAngle() * 180) / Math.PI) % 360 + 360) % 360;
     selectionAngle.textContent = `${Math.round(degrees)}\u00B0`;
   }
 

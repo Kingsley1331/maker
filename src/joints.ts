@@ -1,65 +1,72 @@
-import { Constraint, type Body } from "matter-js";
-import type { Point } from "./shapes";
+import { DistanceJoint, RevoluteJoint, type Body, type Joint, type World } from "planck";
+import type { JointUserData } from "./shapes";
+import { vecToMeters, type Point } from "./units";
 
 export type JointType = "pin" | "revolute" | "rod";
 
 export const JOINT_TYPES: JointType[] = ["pin", "revolute", "rod"];
 
-const ACCENT = "#3b6fe0";
-
-function localOffset(body: Body, world: Point): { x: number; y: number } {
-  return { x: world.x - body.position.x, y: world.y - body.position.y };
+/** Pin a body to the world at `world` (pixels). The body can still rotate around that point. */
+export function createPin(world: World, ground: Body, body: Body, worldPt: Point): Joint | null {
+  const anchor = vecToMeters(worldPt);
+  return world.createJoint(
+    new RevoluteJoint(
+      { collideConnected: false, userData: { kind: "pin" } satisfies JointUserData },
+      ground,
+      body,
+      anchor,
+    ),
+  );
 }
 
-/** Pin a body to the world at `world`. The body can still rotate around that point. */
-export function createPin(body: Body, world: Point): Constraint {
-  return Constraint.create({
-    pointA: { x: world.x, y: world.y },
-    bodyB: body,
-    pointB: localOffset(body, world),
-    length: 0,
-    stiffness: 0.7,
-    label: "Pin",
-    render: {
-      strokeStyle: ACCENT,
-      type: "pin",
-      anchors: false,
-    },
+/**
+ * Hinge two bodies so the two click points (pixels) become one shared pivot.
+ * Body B is translated (not rotated) so its click already sits on `pointA`, then a revolute
+ * is created at that world point. That is a true hinge: the clicked spots stay coincident and
+ * the bodies can fold around them. They do not collide with each other through the joint.
+ */
+export function createRevolute(
+  world: World,
+  bodyA: Body,
+  pointA: Point,
+  bodyB: Body,
+  pointB: Point,
+): Joint | null {
+  const hinge = vecToMeters(pointA);
+  const localB = bodyB.getLocalPoint(vecToMeters(pointB));
+  const current = bodyB.getWorldPoint(localB);
+  const pos = bodyB.getPosition();
+  bodyB.setPosition({
+    x: pos.x + (hinge.x - current.x),
+    y: pos.y + (hinge.y - current.y),
   });
-}
+  bodyB.synchronizeFixtures();
 
-/** Hinge two bodies together so the given world points become coincident. */
-export function createRevolute(bodyA: Body, pointA: Point, bodyB: Body, pointB: Point): Constraint {
-  return Constraint.create({
-    bodyA,
-    bodyB,
-    pointA: localOffset(bodyA, pointA),
-    pointB: localOffset(bodyB, pointB),
-    length: 0,
-    stiffness: 0.7,
-    label: "Revolute",
-    render: {
-      strokeStyle: ACCENT,
-      type: "pin",
-      anchors: false,
-    },
-  });
+  return world.createJoint(
+    new RevoluteJoint(
+      { collideConnected: false, userData: { kind: "revolute" } satisfies JointUserData },
+      bodyA,
+      bodyB,
+      hinge,
+    ),
+  );
 }
 
 /** Rigid bar between two points on two bodies. Length is taken from the initial distance. */
-export function createRod(bodyA: Body, pointA: Point, bodyB: Body, pointB: Point): Constraint {
-  return Constraint.create({
-    bodyA,
-    bodyB,
-    pointA: localOffset(bodyA, pointA),
-    pointB: localOffset(bodyB, pointB),
-    stiffness: 1,
-    label: "Rod",
-    render: {
-      strokeStyle: ACCENT,
-      type: "line",
-      anchors: true,
-      lineWidth: 3,
-    },
-  });
+export function createRod(
+  world: World,
+  bodyA: Body,
+  pointA: Point,
+  bodyB: Body,
+  pointB: Point,
+): Joint | null {
+  return world.createJoint(
+    new DistanceJoint(
+      { collideConnected: true, frequencyHz: 0, userData: { kind: "rod" } satisfies JointUserData },
+      bodyA,
+      bodyB,
+      vecToMeters(pointA),
+      vecToMeters(pointB),
+    ),
+  );
 }

@@ -1,8 +1,18 @@
-import { Body, Composite, Engine, Events, Mouse, MouseConstraint, Query, Render } from "matter-js";
+import { MouseJoint, type Body, type World } from "planck";
 import { createPin, createRevolute, createRod, type JointType } from "./joints";
+import type { AfterRender } from "./physics";
 import { createSelection, type Selection } from "./selection";
-import { createBody, createPolygon, DEFAULT_SIZE, type Point } from "./shapes";
+import {
+  createBody,
+  createPolygon,
+  DEFAULT_SIZE,
+  randomColor,
+  tracePreview,
+  type Point,
+  type ShapePreview,
+} from "./shapes";
 import type { ActiveTool } from "./ui";
+import { toPixels, vecToMeters } from "./units";
 
 /** Max pointer travel (px) between mousedown and mouseup for it to count as a click. */
 const CLICK_THRESHOLD = 6;
@@ -11,63 +21,77 @@ const MIN_SIZE = 8;
 const ACCENT = "#3b6fe0";
 
 export interface InputOptions {
-  engine: Engine;
-  render: Render;
+  world: World;
+  ground: Body;
+  canvas: HTMLCanvasElement;
+  getSize(): { w: number; h: number };
   isPaused(): boolean;
   getActiveTool(): ActiveTool;
   onSelectionUpdate(body: Body | null): void;
+  onAfterRender(cb: AfterRender): void;
+  bodyAt(point: Point): Body | null;
 }
 
 export interface Input {
-  mouseConstraint: MouseConstraint;
   selection: Selection;
 }
 
 /**
  * Pointer handling. All click / select / spawn logic runs on native DOM events so it keeps working
- * while the simulation is paused (Matter's MouseConstraint events only fire on engine ticks). The
- * MouseConstraint itself is kept purely for grab-and-throw while playing.
+ * while the simulation is paused. A MouseJoint is used only for grab-and-throw while playing.
  */
-export function setupInput({ engine, render, isPaused, getActiveTool, onSelectionUpdate }: InputOptions): Input {
-  const mouse = Mouse.create(render.canvas);
-
-  // Matter reads the canvas pixel ratio with parseInt, so fractional ratios (1.25, 1.5 on
-  // Windows display scaling) collapse to 1 and pointer positions end up scaled. Use the real value.
-  const syncPixelRatio = (): void => {
-    mouse.pixelRatio = render.options.pixelRatio ?? window.devicePixelRatio ?? 1;
-  };
-  syncPixelRatio();
-  window.addEventListener("resize", syncPixelRatio);
-
-  const mouseConstraint = MouseConstraint.create(engine, {
-    mouse,
-    constraint: {
-      stiffness: 0.2,
-      render: { visible: false },
-    },
+export function setupInput({
+  world,
+  ground,
+  canvas,
+  getSize,
+  isPaused,
+  getActiveTool,
+  onSelectionUpdate,
+  onAfterRender,
+  bodyAt,
+}: InputOptions): Input {
+  const selection = createSelection({
+    canvas,
+    getSize,
+    isPaused,
+    onSelectionUpdate,
+    onAfterRender,
   });
-  const grabMask = mouseConstraint.collisionFilter.mask ?? 0xffffffff;
 
-  Composite.add(engine.world, mouseConstraint);
-  render.mouse = mouse;
+  let grabEnabled = true;
+  let mouseJoint: MouseJoint | null = null;
 
-  const selection = createSelection({ render, isPaused, onSelectionUpdate });
+  // --- Gesture state ---------------------------------------------------------------------------
 
-  // --- Helpers ---------------------------------------------------------------------------------
+  let pressPoint: Point | null = null;
+  /** Dynamic body under the pointer when pressed (throw while playing, select while paused). */
+  let pressedBody: Body | null = null;
+  /** Press point on empty space: a spawn gesture is in progress. */
+  let spawnStart: Point | null = null;
+  let dragged = false;
+  /** Preview for the drag-to-size gesture; becomes the real body on release. */
+  let ghost: ShapePreview | null = null;
+  let ghostSize = 0;
+  let ghostColor: string | undefined;
+  /** The press cleared a selection, so a plain click must not also spawn. */
+  let clickOnlyDeselects = false;
+  /** Paused move gesture: body centre (px) relative to the pointer at press time. */
+  let moveOffset: Point | null = null;
+  /** Vertices of an in-progress polygon (polygon tool). */
+  let draft: Point[] = [];
+  /** Cursor position for rubber-band previews (polygon draft or pending joint). */
+  let hover: Point | null = null;
+  /** First attachment of a two-click joint (revolute / rod). */
+  let jointAnchor: { body: Body; point: Point } | null = null;
 
   function canvasPoint(event: MouseEvent): Point {
-    const rect = render.canvas.getBoundingClientRect();
+    const rect = canvas.getBoundingClientRect();
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   }
 
-  function bodyAt(point: Point): Body | null {
-    const hits = Query.point(Composite.allBodies(engine.world), point).filter((b) => !b.isStatic);
-    return hits[hits.length - 1] ?? null;
-  }
-
   function maxSize(): number {
-    const w = render.options.width ?? render.canvas.clientWidth;
-    const h = render.options.height ?? render.canvas.clientHeight;
+    const { w, h } = getSize();
     return Math.min(w, h) * 0.3;
   }
 
@@ -89,37 +113,15 @@ export function setupInput({ engine, render, isPaused, getActiveTool, onSelectio
     return type === "revolute" || type === "rod";
   }
 
-  // --- Gesture state ---------------------------------------------------------------------------
-
-  let pressPoint: Point | null = null;
-  /** Dynamic body under the pointer when pressed (throw while playing, select while paused). */
-  let pressedBody: Body | null = null;
-  /** Press point on empty space: a spawn gesture is in progress. */
-  let spawnStart: Point | null = null;
-  let dragged = false;
-  /** Preview body for the drag-to-size gesture; becomes the real body on release. */
-  let ghost: Body | null = null;
-  let ghostSize = 0;
-  let ghostColor: string | undefined;
-  /** The press cleared a selection, so a plain click must not also spawn. */
-  let clickOnlyDeselects = false;
-  /** Paused move gesture: body centre relative to the pointer at press time. */
-  let moveOffset: Point | null = null;
-  /** Vertices of an in-progress polygon (polygon tool). */
-  let draft: Point[] = [];
-  /** Cursor position for rubber-band previews (polygon draft or pending joint). */
-  let hover: Point | null = null;
-  /** First attachment of a two-click joint (revolute / rod). */
-  let jointAnchor: { body: Body; point: Point } | null = null;
-
   function applyCursor(): void {
-    if (moveOffset) render.canvas.style.cursor = "grabbing";
-    else if (isPolygonTool() || (jointType() && isPaused())) render.canvas.style.cursor = "crosshair";
-    else render.canvas.style.cursor = "";
+    if (moveOffset) canvas.style.cursor = "grabbing";
+    else if (isPolygonTool() || (jointType() && isPaused())) canvas.style.cursor = "crosshair";
+    else canvas.style.cursor = "";
   }
 
   function setGrabEnabled(enabled: boolean): void {
-    mouseConstraint.collisionFilter.mask = enabled ? grabMask : 0;
+    grabEnabled = enabled;
+    if (!enabled) endGrab();
   }
 
   function grabIdle(): boolean {
@@ -137,14 +139,36 @@ export function setupInput({ engine, render, isPaused, getActiveTool, onSelectio
     if (grabIdle()) setGrabEnabled(true);
   }
 
+  function startGrab(body: Body, point: Point): void {
+    endGrab();
+    const target = vecToMeters(point);
+    const joint = world.createJoint(
+      new MouseJoint(
+        {
+          maxForce: 1000 * body.getMass(),
+          frequencyHz: 5,
+          dampingRatio: 0.7,
+        },
+        ground,
+        body,
+        target,
+      ),
+    );
+    if (joint) mouseJoint = joint;
+  }
+
+  function endGrab(): void {
+    if (!mouseJoint) return;
+    world.destroyJoint(mouseJoint);
+    mouseJoint = null;
+  }
+
   function rebuildGhost(size: number): void {
     if (!spawnStart) return;
     const tool = getActiveTool();
     if (tool.kind !== "shape" || tool.shape === "polygon") return;
-    ghost = createBody(tool.shape, spawnStart.x, spawnStart.y, size);
-    // Keep one colour for the whole gesture so the preview does not flicker.
-    ghostColor ??= ghost.render.fillStyle;
-    ghost.render.fillStyle = ghostColor;
+    ghostColor ??= randomColor();
+    ghost = { type: tool.shape, x: spawnStart.x, y: spawnStart.y, size, fillStyle: ghostColor };
     ghostSize = size;
   }
 
@@ -176,7 +200,7 @@ export function setupInput({ engine, render, isPaused, getActiveTool, onSelectio
 
   function placeJoint(type: JointType, body: Body, point: Point): void {
     if (type === "pin") {
-      Composite.add(engine.world, createPin(body, point));
+      createPin(world, ground, body, point);
       return;
     }
     if (!jointAnchor) {
@@ -185,24 +209,25 @@ export function setupInput({ engine, render, isPaused, getActiveTool, onSelectio
       return;
     }
     if (jointAnchor.body === body) return;
-    const constraint =
-      type === "revolute"
-        ? createRevolute(jointAnchor.body, jointAnchor.point, body, point)
-        : createRod(jointAnchor.body, jointAnchor.point, body, point);
-    Composite.add(engine.world, constraint);
+    if (type === "revolute") {
+      createRevolute(world, jointAnchor.body, jointAnchor.point, body, point);
+    } else {
+      createRod(world, jointAnchor.body, jointAnchor.point, body, point);
+    }
     clearJointAnchor();
   }
 
   // --- Events ----------------------------------------------------------------------------------
 
-  render.canvas.addEventListener("mousemove", (event) => {
+  canvas.addEventListener("mousemove", (event) => {
     dropDraftIfToolChanged();
     dropJointAnchorIfToolChanged();
     hover = canvasPoint(event);
+    if (mouseJoint) mouseJoint.setTarget(vecToMeters(hover));
     if (!moveOffset) applyCursor();
   });
 
-  render.canvas.addEventListener("mousedown", (event) => {
+  canvas.addEventListener("mousedown", (event) => {
     if (event.button !== 0) return;
     dropDraftIfToolChanged();
     dropJointAnchorIfToolChanged();
@@ -224,6 +249,8 @@ export function setupInput({ engine, render, isPaused, getActiveTool, onSelectio
         // Playing: no spawn; empty presses should not grab.
         selection.deselect();
         setGrabEnabled(false);
+      } else if (grabEnabled) {
+        startGrab(pressedBody, p);
       }
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
@@ -251,16 +278,18 @@ export function setupInput({ engine, render, isPaused, getActiveTool, onSelectio
     } else if (isPaused()) {
       // Paused: the press selects right away and dragging repositions the shape.
       selection.select(pressedBody);
-      moveOffset = { x: pressedBody.position.x - p.x, y: pressedBody.position.y - p.y };
+      const pos = pressedBody.getPosition();
+      moveOffset = { x: toPixels(pos.x) - p.x, y: toPixels(pos.y) - p.y };
       applyCursor();
+    } else if (grabEnabled) {
+      startGrab(pressedBody, p);
     }
-    // Playing with a body under the pointer: the mouse constraint handles grab-and-throw.
 
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   });
 
-  render.canvas.addEventListener("dblclick", (event) => {
+  canvas.addEventListener("dblclick", (event) => {
     event.preventDefault();
     if (!isPolygonTool()) return;
 
@@ -274,8 +303,7 @@ export function setupInput({ engine, render, isPaused, getActiveTool, onSelectio
 
     if (draft.length < 3) return;
 
-    const body = createPolygon(draft);
-    if (body) Composite.add(engine.world, body);
+    createPolygon(world, draft);
     clearDraft();
     applyCursor();
   });
@@ -284,10 +312,12 @@ export function setupInput({ engine, render, isPaused, getActiveTool, onSelectio
     if (!pressPoint) return;
     const p = canvasPoint(event);
     hover = p;
+    if (mouseJoint) mouseJoint.setTarget(vecToMeters(p));
 
     if (moveOffset && pressedBody) {
       // Velocity is left untouched (freeze-frame edit): the shape resumes its prior motion on Play.
-      Body.setPosition(pressedBody, { x: p.x + moveOffset.x, y: p.y + moveOffset.y });
+      pressedBody.setPosition(vecToMeters({ x: p.x + moveOffset.x, y: p.y + moveOffset.y }));
+      pressedBody.synchronizeFixtures();
       return;
     }
 
@@ -308,6 +338,8 @@ export function setupInput({ engine, render, isPaused, getActiveTool, onSelectio
     const isClick = Math.hypot(p.x - pressPoint.x, p.y - pressPoint.y) <= CLICK_THRESHOLD;
     const type = jointType();
 
+    endGrab();
+
     if (type) {
       if (isPaused() && isClick) {
         if (!pressedBody) {
@@ -324,16 +356,15 @@ export function setupInput({ engine, render, isPaused, getActiveTool, onSelectio
       }
     } else if (spawnStart) {
       if (dragged && ghost) {
-        Composite.add(engine.world, ghost);
+        createBody(world, ghost.type, ghost.x, ghost.y, ghost.size, ghost.fillStyle);
       } else if (isClick && !clickOnlyDeselects) {
         const tool = getActiveTool();
         if (tool.kind === "shape" && tool.shape !== "polygon") {
-          Composite.add(engine.world, createBody(tool.shape, spawnStart.x, spawnStart.y, DEFAULT_SIZE));
+          createBody(world, tool.shape, spawnStart.x, spawnStart.y, DEFAULT_SIZE);
         }
       }
     }
     // Paused body presses were selected on mousedown (and moved on drag); nothing more to do.
-    // Drags on a body while playing are throws handled by the mouse constraint.
 
     reset();
   }
@@ -345,24 +376,15 @@ export function setupInput({ engine, render, isPaused, getActiveTool, onSelectio
 
   // --- Ghost / draft / joint preview -----------------------------------------------------------
 
-  Events.on(render, "afterRender", () => {
+  onAfterRender((ctx) => {
     dropDraftIfToolChanged();
     dropJointAnchorIfToolChanged();
-    const ctx = render.context;
 
     if (ghost) {
       ctx.save();
-      ctx.beginPath();
-      if (ghost.circleRadius) {
-        ctx.arc(ghost.position.x, ghost.position.y, ghost.circleRadius, 0, Math.PI * 2);
-      } else {
-        const v = ghost.vertices;
-        ctx.moveTo(v[0].x, v[0].y);
-        for (let i = 1; i < v.length; i++) ctx.lineTo(v[i].x, v[i].y);
-        ctx.closePath();
-      }
+      tracePreview(ctx, ghost);
       ctx.globalAlpha = 0.45;
-      ctx.fillStyle = ghost.render.fillStyle ?? "#888";
+      ctx.fillStyle = ghost.fillStyle;
       ctx.fill();
       ctx.globalAlpha = 1;
       ctx.setLineDash([5, 4]);
@@ -425,8 +447,8 @@ export function setupInput({ engine, render, isPaused, getActiveTool, onSelectio
   });
 
   // Stop the browser from treating drags as text selection / scroll gestures.
-  render.canvas.style.touchAction = "none";
+  canvas.style.touchAction = "none";
   applyCursor();
 
-  return { mouseConstraint, selection };
+  return { selection };
 }

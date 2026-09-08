@@ -1,16 +1,33 @@
-import { Bodies, Body, Common, Composite, Engine, Render, Runner } from "matter-js";
-import decomp from "poly-decomp";
-
-Common.setDecomp(decomp);
+import {
+  Box,
+  MouseJoint,
+  type Body,
+  type CircleShape,
+  type Joint,
+  type PolygonShape,
+  type Vec2Value,
+  World,
+} from "planck";
+import { FIXTURE, getBodyData, isPickable, type BodyUserData, type JointUserData } from "./shapes";
+import { GRAVITY_SCALE, toPixels, vecToMeters, vecToPixels, type Point } from "./units";
 
 const WALL_THICKNESS = 200;
+const WALL_FILL = "#22262e";
+const JOINT_ACCENT = "#3b6fe0";
+const STEP = 1 / 60;
+const VELOCITY_ITERATIONS = 8;
+const POSITION_ITERATIONS = 3;
 
 export const DEFAULT_BACKGROUND = "#ffffff";
 
+export type AfterRender = (ctx: CanvasRenderingContext2D) => void;
+
 export interface Physics {
-  engine: Engine;
-  render: Render;
-  runner: Runner;
+  world: World;
+  ground: Body;
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  getSize(): { w: number; h: number };
   setGravity(x: number, y: number): void;
   setBackground(color: string): void;
   /** Stop stepping the simulation. Rendering continues. */
@@ -18,6 +35,8 @@ export interface Physics {
   /** Resume stepping the simulation. */
   play(): void;
   isPaused(): boolean;
+  onAfterRender(cb: AfterRender): void;
+  bodyAt(point: Point): Body | null;
 }
 
 function sceneSize(container: HTMLElement): { w: number; h: number } {
@@ -27,55 +46,73 @@ function sceneSize(container: HTMLElement): { w: number; h: number } {
   };
 }
 
-export function createPhysics(container: HTMLElement): Physics {
-  const engine = Engine.create();
-  engine.gravity.x = 0;
-  engine.gravity.y = 1;
-  engine.constraintIterations = 4;
+export function bodyBoundsPx(body: Body): { min: Point; max: Point } {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let f = body.getFixtureList(); f; f = f.getNext()) {
+    const aabb = f.getAABB(0);
+    minX = Math.min(minX, aabb.lowerBound.x);
+    minY = Math.min(minY, aabb.lowerBound.y);
+    maxX = Math.max(maxX, aabb.upperBound.x);
+    maxY = Math.max(maxY, aabb.upperBound.y);
+  }
+  if (!Number.isFinite(minX)) {
+    const p = vecToPixels(body.getPosition());
+    return { min: p, max: p };
+  }
+  return { min: vecToPixels({ x: minX, y: minY }), max: vecToPixels({ x: maxX, y: maxY }) };
+}
 
-  const initial = sceneSize(container);
-  const render = Render.create({
-    element: container,
-    engine,
-    options: {
-      width: initial.w,
-      height: initial.h,
-      wireframes: false,
-      background: DEFAULT_BACKGROUND,
-      pixelRatio: window.devicePixelRatio || 1,
-    },
+export function createPhysics(container: HTMLElement): Physics {
+  const world = new World({ gravity: { x: 0, y: GRAVITY_SCALE } });
+  const ground = world.createBody({
+    type: "static",
+    userData: { kind: "ground", label: "Ground", fillStyle: "transparent" } satisfies BodyUserData,
   });
 
-  const runner = Runner.create();
+  const canvas = document.createElement("canvas");
+  container.appendChild(canvas);
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Could not create 2D canvas context");
+  const ctx: CanvasRenderingContext2D = context;
 
   let walls: Body[] = [];
   let lastW = 0;
   let lastH = 0;
   let lastDpr = 0;
+  let background = DEFAULT_BACKGROUND;
+  let paused = false;
+  let size = { w: 1, h: 1 };
+  const afterRender: AfterRender[] = [];
 
   function buildWalls(w: number, h: number): void {
-    if (walls.length) {
-      Composite.remove(engine.world, walls);
-    }
+    for (const wall of walls) world.destroyBody(wall);
 
     const half = WALL_THICKNESS / 2;
-    const wallOptions = {
-      isStatic: true,
-      render: { fillStyle: "#22262e" },
-    };
+    const wallData: BodyUserData = { kind: "wall", label: "Wall", fillStyle: WALL_FILL };
+
+    function wallBox(cx: number, cy: number, hw: number, hh: number): Body {
+      const body = world.createBody({
+        type: "static",
+        position: vecToMeters({ x: cx, y: cy }),
+        userData: wallData,
+      });
+      body.createFixture({
+        shape: new Box(vecToMeters({ x: hw, y: hh }).x, vecToMeters({ x: hw, y: hh }).y),
+        ...FIXTURE,
+        density: 0,
+      });
+      return body;
+    }
 
     walls = [
-      // floor
-      Bodies.rectangle(w / 2, h + half, w + WALL_THICKNESS * 2, WALL_THICKNESS, wallOptions),
-      // ceiling
-      Bodies.rectangle(w / 2, -half, w + WALL_THICKNESS * 2, WALL_THICKNESS, wallOptions),
-      // left
-      Bodies.rectangle(-half, h / 2, WALL_THICKNESS, h + WALL_THICKNESS * 2, wallOptions),
-      // right
-      Bodies.rectangle(w + half, h / 2, WALL_THICKNESS, h + WALL_THICKNESS * 2, wallOptions),
+      wallBox(w / 2, h + half, w / 2 + WALL_THICKNESS, half),
+      wallBox(w / 2, -half, w / 2 + WALL_THICKNESS, half),
+      wallBox(-half, h / 2, half, h / 2 + WALL_THICKNESS),
+      wallBox(w + half, h / 2, half, h / 2 + WALL_THICKNESS),
     ];
-
-    Composite.add(engine.world, walls);
   }
 
   function resize(): void {
@@ -85,46 +122,164 @@ export function createPhysics(container: HTMLElement): Physics {
     lastW = w;
     lastH = h;
     lastDpr = dpr;
+    size = { w, h };
 
-    render.options.width = w;
-    render.options.height = h;
-    render.bounds.max.x = w;
-    render.bounds.max.y = h;
-    Render.setPixelRatio(render, dpr);
+    canvas.width = Math.max(1, Math.floor(w * dpr));
+    canvas.height = Math.max(1, Math.floor(h * dpr));
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     buildWalls(w, h);
+  }
+
+  function drawBody(body: Body): void {
+    const data = getBodyData(body);
+    if (!data || data.kind === "ground") return;
+    ctx.fillStyle = data.fillStyle;
+
+    if (data.outline && data.outline.length >= 3) {
+      ctx.beginPath();
+      const first = body.getWorldPoint(data.outline[0]);
+      ctx.moveTo(toPixels(first.x), toPixels(first.y));
+      for (let i = 1; i < data.outline.length; i++) {
+        const p = body.getWorldPoint(data.outline[i]);
+        ctx.lineTo(toPixels(p.x), toPixels(p.y));
+      }
+      ctx.closePath();
+      ctx.fill();
+      return;
+    }
+
+    for (let f = body.getFixtureList(); f; f = f.getNext()) {
+      const shape = f.getShape();
+      if (shape.getType() === "circle") {
+        const circle = shape as CircleShape;
+        const c = body.getWorldPoint(circle.getCenter());
+        ctx.beginPath();
+        ctx.arc(toPixels(c.x), toPixels(c.y), toPixels(circle.getRadius()), 0, Math.PI * 2);
+        ctx.fill();
+      } else if (shape.getType() === "polygon") {
+        const poly = shape as PolygonShape;
+        if (poly.m_count < 3) continue;
+        ctx.beginPath();
+        for (let i = 0; i < poly.m_count; i++) {
+          const p = body.getWorldPoint(poly.m_vertices[i]);
+          const x = toPixels(p.x);
+          const y = toPixels(p.y);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+  }
+
+  function drawJoint(joint: Joint): void {
+    if (joint.getType() === MouseJoint.TYPE) return;
+    const data = joint.getUserData() as JointUserData | undefined;
+    const a = joint.getAnchorA();
+    const b = joint.getAnchorB();
+    const ax = toPixels(a.x);
+    const ay = toPixels(a.y);
+    const bx = toPixels(b.x);
+    const by = toPixels(b.y);
+    ctx.save();
+    ctx.fillStyle = JOINT_ACCENT;
+    ctx.strokeStyle = JOINT_ACCENT;
+    if (data?.kind === "rod") {
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(ax, ay, 3.5, 0, Math.PI * 2);
+      ctx.arc(bx, by, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.beginPath();
+      ctx.arc(bx, by, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function paint(): void {
+    ctx.fillStyle = background;
+    ctx.fillRect(0, 0, size.w, size.h);
+
+    for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
+      if (getBodyData(body)?.kind === "wall") drawBody(body);
+    }
+    for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
+      if (getBodyData(body)?.kind !== "wall") drawBody(body);
+    }
+    for (let joint: Joint | null = world.getJointList(); joint; joint = joint.getNext() as Joint | null) {
+      drawJoint(joint);
+    }
+    for (const cb of afterRender) cb(ctx);
+  }
+
+  let last = performance.now();
+  let acc = 0;
+  function tick(now: number): void {
+    const dt = Math.min((now - last) / 1000, 0.05);
+    last = now;
+    if (!paused) {
+      acc += dt;
+      while (acc >= STEP) {
+        world.step(STEP, VELOCITY_ITERATIONS, POSITION_ITERATIONS);
+        acc -= STEP;
+      }
+    }
+    paint();
+    requestAnimationFrame(tick);
+  }
+
+  function bodyAt(point: Point): Body | null {
+    const p: Vec2Value = vecToMeters(point);
+    for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
+      if (!isPickable(body)) continue;
+      for (let f = body.getFixtureList(); f; f = f.getNext()) {
+        if (f.testPoint(p)) return body;
+      }
+    }
+    return null;
   }
 
   new ResizeObserver(resize).observe(container);
   window.addEventListener("resize", resize);
   resize();
-
-  Render.run(render);
-  Runner.run(runner, engine);
-  let paused = false;
+  requestAnimationFrame(tick);
 
   return {
-    engine,
-    render,
-    runner,
+    world,
+    ground,
+    canvas,
+    ctx,
+    getSize: () => size,
     setGravity(x: number, y: number): void {
-      engine.gravity.x = x;
-      engine.gravity.y = y;
+      world.setGravity({ x: x * GRAVITY_SCALE, y: y * GRAVITY_SCALE });
     },
     setBackground(color: string): void {
-      // Render applies options.background to the canvas on the next frame.
-      render.options.background = color;
+      background = color;
     },
     pause(): void {
       if (paused) return;
       paused = true;
-      Runner.stop(runner);
+      acc = 0;
     },
     play(): void {
       if (!paused) return;
       paused = false;
-      // Runner.tick treats the long gap since the last tick as a fallback delta, so no jump.
-      Runner.run(runner, engine);
+      last = performance.now();
+      acc = 0;
     },
     isPaused: () => paused,
+    onAfterRender(cb: AfterRender): void {
+      afterRender.push(cb);
+    },
+    bodyAt,
   };
 }
