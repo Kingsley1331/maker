@@ -2,7 +2,7 @@ import { createPhysics } from "./physics";
 import { setupInput } from "./input";
 import { setAngleRange, setJointMotor } from "./joints";
 import { deleteSelection, duplicateSelection } from "./scene-edit";
-import { getBodyData, setBodyMass } from "./shapes";
+import { getBodyData, setBodyMass, setBodyRestitution } from "./shapes";
 import { setupUi } from "./ui";
 import { vecToMeters } from "./units";
 
@@ -49,6 +49,12 @@ const ui = setupUi({
   onMassChange: (mass) => {
     for (const body of input.selection.members) setBodyMass(body, mass);
   },
+  onElasticityChange: (value) => physics.setWorldRestitution(value),
+  onSelectionElasticityChange: (value) => {
+    for (const body of input.selection.members) setBodyRestitution(body, value, true);
+  },
+  onAirDragChange: (value) => physics.setWorldDamping(value),
+  onFrictionChange: (value) => physics.setWorldFriction(value),
   onVelocityChange: (vxPx, vyPx) => {
     const v = vecToMeters({ x: vxPx, y: vyPx });
     for (const body of input.selection.members) body.setLinearVelocity(v);

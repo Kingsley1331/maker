@@ -9,7 +9,22 @@ import {
   World,
 } from "planck";
 import { getAngleLimitArc, jointPivotPx, MOTOR_JOINT_HIT_PX } from "./joints";
-import { FIXTURE, getBodyData, isPickable, type BodyUserData, type JointUserData } from "./shapes";
+import {
+  FIXTURE,
+  getBodyData,
+  getDefaultDamping,
+  getDefaultFriction,
+  getDefaultRestitution,
+  isPickable,
+  setBodyDamping,
+  setBodyFriction,
+  setBodyRestitution,
+  setDefaultDamping,
+  setDefaultFriction,
+  setDefaultRestitution,
+  type BodyUserData,
+  type JointUserData,
+} from "./shapes";
 import { GRAVITY_SCALE, toPixels, vecToMeters, vecToPixels, type Point } from "./units";
 
 const WALL_THICKNESS = 200;
@@ -43,6 +58,12 @@ export interface Physics {
   panBy(dx: number, dy: number): void;
   setGravity(x: number, y: number): void;
   setBackground(color: string): void;
+  /** Default bounce for walls and bodies that have not overridden elasticity. */
+  setWorldRestitution(value: number): void;
+  /** Surface friction for walls and user shapes. */
+  setWorldFriction(value: number): void;
+  /** Linear and angular damping for user shapes. */
+  setWorldDamping(value: number): void;
   /** Stop stepping the simulation. Rendering continues. */
   pause(): void;
   /** Resume stepping the simulation. */
@@ -376,6 +397,37 @@ export function createPhysics(container: HTMLElement): Physics {
     panBy,
     setGravity(x: number, y: number): void {
       world.setGravity({ x: x * GRAVITY_SCALE, y: y * GRAVITY_SCALE });
+    },
+    setWorldRestitution(value: number): void {
+      setDefaultRestitution(value);
+      const r = getDefaultRestitution();
+      for (const wall of walls) {
+        for (let f = wall.getFixtureList(); f; f = f.getNext()) f.setRestitution(r);
+      }
+      for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
+        if (!isPickable(body)) continue;
+        if (getBodyData(body)?.restitutionOverride !== undefined) continue;
+        setBodyRestitution(body, r, false);
+      }
+    },
+    setWorldFriction(value: number): void {
+      setDefaultFriction(value);
+      const mu = getDefaultFriction();
+      for (const wall of walls) {
+        for (let f = wall.getFixtureList(); f; f = f.getNext()) f.setFriction(mu);
+      }
+      for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
+        if (!isPickable(body)) continue;
+        setBodyFriction(body, mu);
+      }
+    },
+    setWorldDamping(value: number): void {
+      setDefaultDamping(value);
+      const d = getDefaultDamping();
+      for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
+        if (!isPickable(body)) continue;
+        setBodyDamping(body, d);
+      }
     },
     setBackground(color: string): void {
       background = color;

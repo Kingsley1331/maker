@@ -1,7 +1,6 @@
 import { Box, Circle, Polygon, Settings, type Body, type World } from "planck";
 import decomp from "poly-decomp";
 import {
-  ANGULAR_DAMPING,
   DENSITY,
   FRICTION,
   LINEAR_DAMPING,
@@ -12,6 +11,8 @@ import {
 } from "./units";
 
 Settings.maxPolygonVertices = 16;
+/** Restitution is applied at all impact speeds; the default 1 m/s cutoff made high-bounce feel inelastic. */
+Settings.velocityThreshold = 0;
 
 export type PrimitiveShape = "circle" | "rectangle" | "triangle" | "pentagon" | "hexagon";
 export type ShapeType = PrimitiveShape | "polygon" | "box" | "frame";
@@ -54,6 +55,8 @@ export interface BodyUserData {
   outline?: Point[];
   /** Local-space inner ring in meters; filled as a hole against `outline`. */
   hole?: Point[];
+  /** When set, this body ignores the global elasticity slider. */
+  restitutionOverride?: number;
 }
 
 export interface ShapePreview {
@@ -79,9 +82,80 @@ export interface JointUserData {
 
 export const FIXTURE = {
   density: DENSITY,
-  friction: FRICTION,
-  restitution: RESTITUTION,
+  get friction() {
+    return defaultFriction;
+  },
+  get restitution() {
+    return defaultRestitution;
+  },
 };
+
+let defaultRestitution = RESTITUTION;
+let defaultFriction = FRICTION;
+let defaultDamping = LINEAR_DAMPING;
+
+export function clampUnit(value: number): number {
+  return Math.min(1, Math.max(0, value));
+}
+
+export function clampRestitution(value: number): number {
+  return clampUnit(value);
+}
+
+export function getDefaultRestitution(): number {
+  return defaultRestitution;
+}
+
+export function setDefaultRestitution(value: number): void {
+  defaultRestitution = clampRestitution(value);
+}
+
+export function getDefaultFriction(): number {
+  return defaultFriction;
+}
+
+export function setDefaultFriction(value: number): void {
+  defaultFriction = clampUnit(value);
+}
+
+export function getDefaultDamping(): number {
+  return defaultDamping;
+}
+
+export function setDefaultDamping(value: number): void {
+  defaultDamping = clampUnit(value);
+}
+
+function dampingProps(): { linearDamping: number; angularDamping: number } {
+  const d = defaultDamping;
+  return { linearDamping: d, angularDamping: d };
+}
+
+export function getBodyRestitution(body: Body): number {
+  const fixture = body.getFixtureList();
+  return fixture ? fixture.getRestitution() : defaultRestitution;
+}
+
+/** Write restitution on every fixture. `override` true pins the body against later global changes. */
+export function setBodyRestitution(body: Body, value: number, override: boolean): void {
+  const r = clampRestitution(value);
+  for (let f = body.getFixtureList(); f; f = f.getNext()) f.setRestitution(r);
+  const data = getBodyData(body);
+  if (!data) return;
+  if (override) data.restitutionOverride = r;
+  else delete data.restitutionOverride;
+}
+
+export function setBodyFriction(body: Body, value: number): void {
+  const mu = clampUnit(value);
+  for (let f = body.getFixtureList(); f; f = f.getNext()) f.setFriction(mu);
+}
+
+export function setBodyDamping(body: Body, value: number): void {
+  const d = clampUnit(value);
+  body.setLinearDamping(d);
+  body.setAngularDamping(d);
+}
 
 export function randomColor(): string {
   return DEFAULT_FILL;
@@ -186,8 +260,7 @@ export function createBody(
 ): Body {
   const body = world.createDynamicBody({
     position: vecToMeters({ x, y }),
-    linearDamping: LINEAR_DAMPING,
-    angularDamping: ANGULAR_DAMPING,
+    ...dampingProps(),
     userData: {
       kind: "shape",
       label: primitiveLabel(type),
@@ -277,8 +350,7 @@ export function createBox(
   const { x, y, w, h } = boxBounds(a, b);
   const body = world.createDynamicBody({
     position: vecToMeters({ x: x + w / 2, y: y + h / 2 }),
-    linearDamping: LINEAR_DAMPING,
-    angularDamping: ANGULAR_DAMPING,
+    ...dampingProps(),
     userData: {
       kind: "shape",
       label: "Rectangle Body",
@@ -309,8 +381,7 @@ export function createFrame(
   const halfT = t / 2;
   const body = world.createDynamicBody({
     position: vecToMeters({ x: x + w / 2, y: y + h / 2 }),
-    linearDamping: LINEAR_DAMPING,
-    angularDamping: ANGULAR_DAMPING,
+    ...dampingProps(),
     userData: {
       kind: "shape",
       label: "Frame Body",
@@ -376,8 +447,7 @@ export function createPolygon(world: World, points: Point[]): Body | null {
 
   const body = world.createDynamicBody({
     position: centre,
-    linearDamping: LINEAR_DAMPING,
-    angularDamping: ANGULAR_DAMPING,
+    ...dampingProps(),
     userData: {
       kind: "shape",
       label: "Polygon Body",
@@ -517,6 +587,7 @@ export function cloneBody(world: World, source: Body, offsetM: Point): Body {
         fillStyle: srcData.fillStyle,
         outline: srcData.outline?.map((p) => ({ x: p.x, y: p.y })),
         hole: srcData.hole?.map((p) => ({ x: p.x, y: p.y })),
+        restitutionOverride: srcData.restitutionOverride,
       }
     : { kind: "shape", label: "Body", fillStyle: DEFAULT_FILL };
 
@@ -525,8 +596,8 @@ export function cloneBody(world: World, source: Body, offsetM: Point): Body {
     type: source.getType(),
     position: { x: pos.x + offsetM.x, y: pos.y + offsetM.y },
     angle: source.getAngle(),
-    linearDamping: LINEAR_DAMPING,
-    angularDamping: ANGULAR_DAMPING,
+    linearDamping: source.getLinearDamping(),
+    angularDamping: source.getAngularDamping(),
     userData,
   });
 

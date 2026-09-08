@@ -14,13 +14,14 @@ import {
   DEFAULT_FILL,
   DEFAULT_WALL_THICKNESS,
   getBodyData,
+  getBodyRestitution,
   isPrimitiveShape,
   MIN_WALL_THICKNESS,
   SHAPE_TYPES,
   type JointUserData,
   type ShapeType,
 } from "./shapes";
-import { toPixels } from "./units";
+import { FRICTION, LINEAR_DAMPING, RESTITUTION, toPixels } from "./units";
 
 export type ActiveTool =
   | { kind: "shape"; shape: ShapeType }
@@ -39,6 +40,10 @@ export interface UiOptions {
   /** Called when the Static / Dynamic / Kinematic control is used on the current selection. */
   onBodyTypeChange(type: BodyType): void;
   onMassChange(mass: number): void;
+  onElasticityChange(value: number): void;
+  onSelectionElasticityChange(value: number): void;
+  onAirDragChange(value: number): void;
+  onFrictionChange(value: number): void;
   /** Linear velocity in pixels per second. */
   onVelocityChange(vxPx: number, vyPx: number): void;
   /** Angular velocity in degrees per second. */
@@ -112,6 +117,10 @@ export function setupUi({
   onMotorRangeChange,
   onBodyTypeChange,
   onMassChange,
+  onElasticityChange,
+  onSelectionElasticityChange,
+  onAirDragChange,
+  onFrictionChange,
   onVelocityChange,
   onSpinChange,
   onColorChange,
@@ -492,6 +501,45 @@ export function setupUi({
   gravityY.addEventListener("input", applyGravity);
   applyGravity();
 
+  const elasticity = requireElement<HTMLInputElement>("elasticity");
+  const elasticityValue = requireElement<HTMLOutputElement>("elasticity-value");
+
+  function applyElasticity(): void {
+    const value = Number(elasticity.value);
+    const r = Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : RESTITUTION;
+    elasticityValue.textContent = r.toFixed(2);
+    onElasticityChange(r);
+  }
+
+  elasticity.addEventListener("input", applyElasticity);
+  applyElasticity();
+
+  const airDrag = requireElement<HTMLInputElement>("air-drag");
+  const airDragValue = requireElement<HTMLOutputElement>("air-drag-value");
+
+  function applyAirDrag(): void {
+    const value = Number(airDrag.value);
+    const d = Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : LINEAR_DAMPING;
+    airDragValue.textContent = d.toFixed(2);
+    onAirDragChange(d);
+  }
+
+  airDrag.addEventListener("input", applyAirDrag);
+  applyAirDrag();
+
+  const friction = requireElement<HTMLInputElement>("friction");
+  const frictionValue = requireElement<HTMLOutputElement>("friction-value");
+
+  function applyFriction(): void {
+    const value = Number(friction.value);
+    const mu = Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : FRICTION;
+    frictionValue.textContent = mu.toFixed(2);
+    onFrictionChange(mu);
+  }
+
+  friction.addEventListener("input", applyFriction);
+  applyFriction();
+
   // Background colour
   const backgroundColor = requireElement<HTMLInputElement>("background-color");
   const applyBackground = (): void => onBackgroundChange(backgroundColor.value);
@@ -504,6 +552,7 @@ export function setupUi({
   const selectionSize = requireElement<HTMLElement>("selection-size");
   const selectionAngle = requireElement<HTMLElement>("selection-angle");
   const selectionMass = requireElement<HTMLInputElement>("selection-mass");
+  const selectionElasticity = requireElement<HTMLInputElement>("selection-elasticity");
   const selectionVx = requireElement<HTMLInputElement>("selection-vx");
   const selectionVy = requireElement<HTMLInputElement>("selection-vy");
   const selectionSpin = requireElement<HTMLInputElement>("selection-spin");
@@ -546,6 +595,12 @@ export function setupUi({
     const mass = Number(selectionMass.value);
     if (!Number.isFinite(mass)) return;
     onMassChange(Math.max(0.01, mass));
+  });
+
+  selectionElasticity.addEventListener("input", () => {
+    const value = Number(selectionElasticity.value);
+    if (!Number.isFinite(value)) return;
+    onSelectionElasticityChange(Math.min(1, Math.max(0, value)));
   });
 
   function emitVelocity(): void {
@@ -600,6 +655,7 @@ export function setupUi({
 
     selectionMass.disabled = !members.some((member) => member.getType() === "dynamic");
     setIfUnfocused(selectionMass, body.getMass().toFixed(2));
+    setIfUnfocused(selectionElasticity, getBodyRestitution(body).toFixed(2));
     const vel = body.getLinearVelocity();
     setIfUnfocused(selectionVx, toPixels(vel.x).toFixed(1));
     setIfUnfocused(selectionVy, toPixels(vel.y).toFixed(1));

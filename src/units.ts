@@ -12,9 +12,9 @@ export const DENSITY = 0.001 * SCALE * SCALE;
 
 export const RESTITUTION = 0.4;
 export const FRICTION = 0.3;
-/** Stand-in for Matter’s frictionAir on linear motion. */
-export const LINEAR_DAMPING = 0.1;
-export const ANGULAR_DAMPING = 0.05;
+/** Stand-in for Matter’s frictionAir (0.01). Higher values bleed speed between bounces. */
+export const LINEAR_DAMPING = 0.01;
+export const ANGULAR_DAMPING = 0.01;
 
 export type Point = { x: number; y: number };
 
