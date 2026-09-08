@@ -7,7 +7,55 @@
     <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <div id="app">
+    <header id="nav">
+      <div class="nav-tabs" role="tablist" aria-label="Views">
+        <button
+          id="tab-editor"
+          class="nav-tab is-active"
+          type="button"
+          role="tab"
+          aria-selected="true"
+          aria-controls="app"
+          data-view="editor"
+        >
+          New scene
+        </button>
+        <button
+          id="tab-scenes"
+          class="nav-tab"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="scenes-view"
+          data-view="scenes"
+        >
+          Scenes
+        </button>
+      </div>
+      <div class="nav-actions">
+        <span id="scene-title" class="scene-title" aria-live="polite">Untitled</span>
+        <button id="scene-clear" class="nav-btn" type="button" title="Start a blank scene">Clear</button>
+        <button id="scene-save-new" class="nav-btn" type="button" title="Save a copy as a new scene">
+          Save as new
+        </button>
+        <button id="scene-save" class="nav-btn nav-btn-primary" type="button" title="Save this scene">
+          Save
+        </button>
+      </div>
+    </header>
+
+    <section id="scenes-view" class="view-panel" role="tabpanel" aria-labelledby="tab-scenes" hidden>
+      <div class="scenes-header">
+        <h1>Saved scenes</h1>
+        <p class="scenes-hint">Load a scene to keep editing it, or delete the ones you no longer need.</p>
+      </div>
+      <p id="scenes-empty" class="scenes-empty" hidden>
+        No saved scenes yet. Build something on the New scene tab and press Save.
+      </p>
+      <div id="scene-list" class="scene-list"></div>
+    </section>
+
+    <div id="app" role="tabpanel" aria-labelledby="tab-editor">
       <div id="toolbar">
       <div class="group top-row">
         <button id="pause-toggle" class="pause-btn" type="button" aria-pressed="false" title="Pause / Play (Space)">

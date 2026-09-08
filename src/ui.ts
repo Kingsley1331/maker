@@ -69,8 +69,24 @@ export interface SpraySample {
   spinDeg: number;
 }
 
+/** Toolbar-wide simulation settings (slider / colour values, not physics units). */
+export interface WorldSettings {
+  gravityX: number;
+  gravityY: number;
+  elasticity: number;
+  airDrag: number;
+  friction: number;
+  background: string;
+}
+
 export interface Ui {
   getSelectedShape(): ShapeType;
+  /** Current values of the global sliders and background colour. */
+  getSettings(): WorldSettings;
+  /** Write the global sliders / background and push the values to the simulation. */
+  setSettings(settings: WorldSettings): void;
+  /** Restore the global sliders / background to their markup defaults. */
+  resetSettings(): void;
   getActiveTool(): ActiveTool;
   /** True when Spray is on and a primitive shape is the active tool. */
   isSpray(): boolean;
@@ -590,6 +606,42 @@ export function setupUi({
   backgroundColor.addEventListener("input", applyBackground);
   applyBackground();
 
+  function applyAllSettings(): void {
+    applyGravity();
+    applyElasticity();
+    applyAirDrag();
+    applyFriction();
+    applyBackground();
+  }
+
+  function getSettings(): WorldSettings {
+    return {
+      gravityX: parseFloat(gravityX.value),
+      gravityY: parseFloat(gravityY.value),
+      elasticity: parseFloat(elasticity.value),
+      airDrag: parseFloat(airDrag.value),
+      friction: parseFloat(friction.value),
+      background: backgroundColor.value,
+    };
+  }
+
+  function setSettings(settings: WorldSettings): void {
+    gravityX.value = String(settings.gravityX);
+    gravityY.value = String(settings.gravityY);
+    elasticity.value = String(settings.elasticity);
+    airDrag.value = String(settings.airDrag);
+    friction.value = String(settings.friction);
+    backgroundColor.value = settings.background;
+    applyAllSettings();
+  }
+
+  function resetSettings(): void {
+    for (const input of [gravityX, gravityY, elasticity, airDrag, friction, backgroundColor]) {
+      input.value = input.defaultValue;
+    }
+    applyAllSettings();
+  }
+
   // Selected body readout
   const selectionInfo = requireElement<HTMLDivElement>("selection-info");
   const selectionShape = requireElement<HTMLElement>("selection-shape");
@@ -762,6 +814,9 @@ export function setupUi({
 
   return {
     getSelectedShape: () => selectedShape,
+    getSettings,
+    setSettings,
+    resetSettings,
     getActiveTool: () => activeTool,
     isSpray,
     isCut,

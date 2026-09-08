@@ -2,9 +2,21 @@ import { createPhysics } from "./physics";
 import { setupInput } from "./input";
 import { setAngleRange, setJointMotor } from "./joints";
 import { deleteSelection, duplicateSelection } from "./scene-edit";
+import {
+  clearScene,
+  deserializeScene,
+  SCENE_FORMAT_VERSION,
+  serializeScene,
+  type SavedScene,
+  type SceneSettings,
+} from "./scene-serialize";
+import { countScenes, getScene, putScene } from "./scene-store";
+import { setupScenesUi } from "./scenes-ui";
 import { getBodyData, setBodyMass, setBodyRestitution } from "./shapes";
 import { setupUi } from "./ui";
 import { vecToMeters } from "./units";
+
+const THUMBNAIL_WIDTH = 320;
 
 const scene = document.getElementById("scene");
 if (!scene) {
@@ -117,3 +129,121 @@ const input = setupInput({
 });
 
 ui.setPaused(physics.isPaused());
+
+// Scene save / load -------------------------------------------------------------------------
+
+let currentSceneId: string | null = null;
+let currentSceneName: string | null = null;
+let currentCreatedAt: number | null = null;
+
+function captureThumbnail(): string {
+  const source = physics.canvas;
+  const { w, h } = physics.getSize();
+  const scale = Math.min(1, THUMBNAIL_WIDTH / Math.max(1, w));
+  const thumb = document.createElement("canvas");
+  thumb.width = Math.max(1, Math.round(w * scale));
+  thumb.height = Math.max(1, Math.round(h * scale));
+  const ctx = thumb.getContext("2d");
+  if (!ctx) return "";
+  ctx.fillStyle = physics.getBackground();
+  ctx.fillRect(0, 0, thumb.width, thumb.height);
+  ctx.drawImage(source, 0, 0, thumb.width, thumb.height);
+  return thumb.toDataURL("image/jpeg", 0.7);
+}
+
+function currentSettings(): SceneSettings {
+  const settings = ui.getSettings();
+  return { ...settings, zoom: physics.getZoom(), pan: physics.getOffset() };
+}
+
+function setCurrentScene(scene: Pick<SavedScene, "id" | "name" | "createdAt"> | null): void {
+  currentSceneId = scene?.id ?? null;
+  currentSceneName = scene?.name ?? null;
+  currentCreatedAt = scene?.createdAt ?? null;
+  scenesUi.setSceneTitle(currentSceneName);
+}
+
+async function defaultSceneName(): Promise<string> {
+  try {
+    return `Scene ${(await countScenes()) + 1}`;
+  } catch {
+    return "Scene";
+  }
+}
+
+async function saveScene(asNew: boolean): Promise<void> {
+  const overwrite = !asNew && currentSceneId !== null;
+  const suggested = overwrite && currentSceneName ? currentSceneName : await defaultSceneName();
+  const entered = window.prompt(overwrite ? "Scene name" : "Name for the new scene", suggested);
+  if (entered === null) return;
+  const name = entered.trim() || suggested;
+
+  const now = Date.now();
+  const scene: SavedScene = {
+    id: overwrite && currentSceneId ? currentSceneId : crypto.randomUUID(),
+    name,
+    createdAt: overwrite && currentCreatedAt !== null ? currentCreatedAt : now,
+    updatedAt: now,
+    thumbnail: captureThumbnail(),
+    version: SCENE_FORMAT_VERSION,
+    settings: currentSettings(),
+    ...serializeScene(physics.world, physics.ground),
+  };
+
+  try {
+    await putScene(scene);
+    setCurrentScene(scene);
+  } catch (error) {
+    console.error("Could not save scene", error);
+    window.alert("Saving failed. Your browser may be blocking site storage.");
+  }
+}
+
+function resetEditor(): void {
+  physics.pause();
+  input.selection.deselect();
+  ui.setPaused(true);
+}
+
+function clearCurrentScene(): void {
+  resetEditor();
+  clearScene(physics.world);
+  ui.resetSettings();
+  physics.setZoom(1);
+  ui.setZoom(1);
+  setCurrentScene(null);
+}
+
+async function loadScene(id: string): Promise<void> {
+  let scene: SavedScene | null = null;
+  try {
+    scene = await getScene(id);
+  } catch (error) {
+    console.error("Could not read scene", error);
+  }
+  if (!scene) {
+    window.alert("That scene could not be loaded.");
+    await scenesUi.refresh();
+    return;
+  }
+
+  resetEditor();
+  deserializeScene(physics.world, physics.ground, scene);
+  const { zoom, pan, ...settings } = scene.settings;
+  ui.setSettings(settings);
+  physics.setView(zoom, pan);
+  ui.setZoom(zoom);
+  setCurrentScene(scene);
+  scenesUi.showView("editor");
+}
+
+const scenesUi = setupScenesUi({
+  onSave: () => void saveScene(false),
+  onSaveAsNew: () => void saveScene(true),
+  onClear: () => {
+    if (!window.confirm("Clear the canvas? Unsaved changes will be lost.")) return;
+    clearCurrentScene();
+  },
+  onLoad: (id) => void loadScene(id),
+});
+scenesUi.setSceneTitle(null);

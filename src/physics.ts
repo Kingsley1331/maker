@@ -62,8 +62,15 @@ export interface Physics {
   screenToWorld(p: Point): Point;
   /** Shift the view by screen-pixel deltas. Does not change zoom. */
   panBy(dx: number, dy: number): void;
+  /** Current view offset in screen pixels. */
+  getOffset(): Point;
+  /** Set zoom and offset directly (used when restoring a saved scene). */
+  setView(zoom: number, offset: Point): void;
   setGravity(x: number, y: number): void;
+  /** Gravity in toolbar units (inverse of `setGravity`). */
+  getGravity(): Point;
   setBackground(color: string): void;
+  getBackground(): string;
   /** Default bounce for walls and bodies that have not overridden elasticity. */
   setWorldRestitution(value: number): void;
   /** Surface friction for walls and user shapes. */
@@ -476,8 +483,17 @@ export function createPhysics(container: HTMLElement): Physics {
     setZoom,
     screenToWorld,
     panBy,
+    getOffset: () => ({ x: offset.x, y: offset.y }),
+    setView(nextZoom: number, nextOffset: Point): void {
+      zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, nextZoom));
+      offset = { x: nextOffset.x, y: nextOffset.y };
+    },
     setGravity(x: number, y: number): void {
       world.setGravity({ x: x * GRAVITY_SCALE, y: y * GRAVITY_SCALE });
+    },
+    getGravity(): Point {
+      const g = world.getGravity();
+      return { x: g.x / GRAVITY_SCALE, y: g.y / GRAVITY_SCALE };
     },
     setWorldRestitution(value: number): void {
       setDefaultRestitution(value);
@@ -513,6 +529,7 @@ export function createPhysics(container: HTMLElement): Physics {
     setBackground(color: string): void {
       background = color;
     },
+    getBackground: () => background,
     pause(): void {
       if (paused) return;
       paused = true;

@@ -38,7 +38,8 @@ function isGround(body: Body): boolean {
   return getBodyData(body)?.kind === "ground";
 }
 
-function isSceneJoint(joint: Joint): boolean {
+/** Joints that belong to the scene (everything except the temporary drag MouseJoint). */
+export function isSceneJoint(joint: Joint): boolean {
   return joint.getType() !== MouseJoint.TYPE;
 }
 
@@ -57,12 +58,111 @@ function mapBody(body: Body, bodyMap: Map<Body, Body>, ground: Body): Body {
   return bodyMap.get(body) ?? (isGround(body) ? ground : body);
 }
 
-function copyJointMotorState(from: Joint, to: Joint): void {
-  const speed = getMotorSpeed(from);
-  if (speed !== 0) setJointMotor(to, speed);
-  if (hasAngleLimit(from) && hasAngleLimit(to)) {
-    setAngleRange(to, getAngleRangeDeg(from));
+/** Everything needed to rebuild a scene joint between two (possibly different) bodies. */
+export interface JointBlueprint {
+  kind: JointUserData["kind"];
+  /** Planck local anchors (metres) on each body. */
+  localAnchorA: Point;
+  localAnchorB: Point;
+  /** Draw anchors for weld / wheel (metres, body-local). */
+  localA?: Point;
+  localB?: Point;
+  /** Motor speed in rad/s; 0 means off. */
+  motorSpeed: number;
+  /** Angle range in degrees, or null when the joint has no limit / limit is off. */
+  angleRangeDeg: number | null;
+  /** Rest length for rods (metres). */
+  length?: number;
+}
+
+/** Read a scene joint into a plain blueprint, or null for joints we cannot rebuild. */
+export function jointBlueprint(joint: Joint): JointBlueprint | null {
+  const anchors = jointAnchors(joint);
+  if (!anchors) return null;
+  const data = joint.getUserData() as JointUserData | undefined;
+  let kind = data?.kind;
+  if (kind === undefined) {
+    if (joint.getType() === RevoluteJoint.TYPE) {
+      kind = isGround(joint.getBodyA()) || isGround(joint.getBodyB()) ? "pin" : "revolute";
+    } else if (joint.getType() === DistanceJoint.TYPE) {
+      kind = "rod";
+    } else {
+      return null;
+    }
   }
+
+  const blueprint: JointBlueprint = {
+    kind,
+    localAnchorA: { x: anchors.m_localAnchorA.x, y: anchors.m_localAnchorA.y },
+    localAnchorB: { x: anchors.m_localAnchorB.x, y: anchors.m_localAnchorB.y },
+    motorSpeed: getMotorSpeed(joint),
+    angleRangeDeg: hasAngleLimit(joint) && joint.isLimitEnabled() ? getAngleRangeDeg(joint) : null,
+  };
+  if (data?.localA) blueprint.localA = { x: data.localA.x, y: data.localA.y };
+  if (data?.localB) blueprint.localB = { x: data.localB.x, y: data.localB.y };
+  if (joint.getType() === DistanceJoint.TYPE) {
+    blueprint.length = (joint as DistanceJoint).getLength();
+  }
+  return blueprint;
+}
+
+/**
+ * Create a joint from a blueprint between `a` and `b` (either may be `ground`), applying
+ * motor speed and angle limits. Returns null when the blueprint is incomplete.
+ */
+export function buildJoint(
+  world: World,
+  ground: Body,
+  bp: JointBlueprint,
+  a: Body,
+  b: Body,
+): Joint | null {
+  const pointA = vecToPixels(a.getWorldPoint(bp.localAnchorA));
+  const pointB = vecToPixels(b.getWorldPoint(bp.localAnchorB));
+
+  let created: Joint | null = null;
+  if (bp.kind === "pin") {
+    const member = a === ground ? b : a;
+    const pt = a === ground ? pointB : pointA;
+    created = createPin(world, ground, member, pt);
+  } else if (bp.kind === "revolute") {
+    created = world.createJoint(
+      new RevoluteJoint(
+        { collideConnected: false, userData: { kind: "revolute" } satisfies JointUserData },
+        a,
+        b,
+        a.getWorldPoint(bp.localAnchorA),
+      ),
+    );
+  } else if (bp.kind === "rod") {
+    created = createRod(world, a, pointA, b, pointB);
+    if (created && bp.length !== undefined) {
+      (created as DistanceJoint).setLength(bp.length);
+    }
+  } else if (bp.kind === "weld" && bp.localA && bp.localB) {
+    created = createWeld(
+      world,
+      a,
+      vecToPixels(a.getWorldPoint(bp.localA)),
+      b,
+      vecToPixels(b.getWorldPoint(bp.localB)),
+    );
+  } else if (bp.kind === "wheel" && bp.localA && bp.localB) {
+    created = createWheel(
+      world,
+      a,
+      vecToPixels(a.getWorldPoint(bp.localA)),
+      b,
+      vecToPixels(b.getWorldPoint(bp.localB)),
+    );
+  }
+
+  if (!created) return null;
+  if (bp.motorSpeed !== 0) setJointMotor(created, bp.motorSpeed);
+  if (bp.angleRangeDeg !== null && hasAngleLimit(created)) {
+    setAngleRange(created, bp.angleRangeDeg);
+  }
+  return created;
 }
 
 function cloneJoint(
@@ -71,73 +171,11 @@ function cloneJoint(
   joint: Joint,
   bodyMap: Map<Body, Body>,
 ): Joint | null {
-  const anchors = jointAnchors(joint);
-  if (!anchors) return null;
-
-  const data = joint.getUserData() as JointUserData | undefined;
-  const kind = data?.kind;
-  const oldA = joint.getBodyA();
-  const oldB = joint.getBodyB();
-  const newA = mapBody(oldA, bodyMap, ground);
-  const newB = mapBody(oldB, bodyMap, ground);
-
-  const localA = { x: anchors.m_localAnchorA.x, y: anchors.m_localAnchorA.y };
-  const localB = { x: anchors.m_localAnchorB.x, y: anchors.m_localAnchorB.y };
-  const pointA = vecToPixels(newA.getWorldPoint(localA));
-  const pointB = vecToPixels(newB.getWorldPoint(localB));
-
-  if (kind === "pin" || (kind === undefined && (isGround(oldA) || isGround(oldB)))) {
-    const member = isGround(oldA) ? newB : newA;
-    const pt = isGround(oldA) ? pointB : pointA;
-    const created = createPin(world, ground, member, pt);
-    if (created) copyJointMotorState(joint, created);
-    return created;
-  }
-
-  if (kind === "revolute" || joint.getType() === RevoluteJoint.TYPE) {
-    const created = world.createJoint(
-      new RevoluteJoint(
-        { collideConnected: false, userData: { kind: "revolute" } satisfies JointUserData },
-        newA,
-        newB,
-        newA.getWorldPoint(localA),
-      ),
-    );
-    if (created) copyJointMotorState(joint, created);
-    return created;
-  }
-
-  if (kind === "rod" || joint.getType() === DistanceJoint.TYPE) {
-    const created = createRod(world, newA, pointA, newB, pointB);
-    if (created && joint.getType() === DistanceJoint.TYPE) {
-      (created as DistanceJoint).setLength((joint as DistanceJoint).getLength());
-    }
-    return created;
-  }
-
-  if (kind === "weld" && data?.localA && data?.localB) {
-    return createWeld(
-      world,
-      newA,
-      vecToPixels(newA.getWorldPoint(data.localA)),
-      newB,
-      vecToPixels(newB.getWorldPoint(data.localB)),
-    );
-  }
-
-  if (kind === "wheel" && data?.localA && data?.localB) {
-    const created = createWheel(
-      world,
-      newA,
-      vecToPixels(newA.getWorldPoint(data.localA)),
-      newB,
-      vecToPixels(newB.getWorldPoint(data.localB)),
-    );
-    if (created) copyJointMotorState(joint, created);
-    return created;
-  }
-
-  return null;
+  const bp = jointBlueprint(joint);
+  if (!bp) return null;
+  const newA = mapBody(joint.getBodyA(), bodyMap, ground);
+  const newB = mapBody(joint.getBodyB(), bodyMap, ground);
+  return buildJoint(world, ground, bp, newA, newB);
 }
 
 /** Remove a selected joint, or every member body and its scene joints. */

@@ -625,66 +625,74 @@ export function tracePreview(ctx: CanvasRenderingContext2D, preview: ShapePrevie
 
 type FixtureLike = NonNullable<ReturnType<Body["getFixtureList"]>>;
 
-type FixtureSpec = {
-  shape: Circle | Polygon | Edge | Chain;
+/** Plain-data description of a fixture's shape (body-local metres). JSON-safe. */
+export type ShapeJson =
+  | { type: "circle"; center: Point; radius: number }
+  | { type: "polygon"; vertices: Point[] }
+  | { type: "edge"; v1: Point; v2: Point }
+  | { type: "chain"; vertices: Point[]; loop: boolean };
+
+/** Plain-data description of a fixture; used for cloning, scaling and scene save/load. */
+export interface FixtureJson {
+  shape: ShapeJson;
   density: number;
   friction: number;
   restitution: number;
-};
+}
 
-function fixtureSpecs(body: Body, factor: number): FixtureSpec[] {
-  const specs: FixtureSpec[] = [];
+/** Read a body's fixtures as plain data, scaling geometry about the body origin by `factor`. */
+export function fixtureSpecs(body: Body, factor = 1): FixtureJson[] {
+  const specs: FixtureJson[] = [];
+  const scale = (v: { x: number; y: number }): Point => ({ x: v.x * factor, y: v.y * factor });
   for (let f = body.getFixtureList(); f; f = f.getNext()) {
     const shape = f.getShape();
     const type = shape.getType();
+    let json: ShapeJson | null = null;
     if (type === "circle") {
       const circle = shape as import("planck").CircleShape;
-      const center = circle.getCenter();
-      specs.push({
-        shape: new Circle({ x: center.x * factor, y: center.y * factor }, circle.getRadius() * factor),
-        density: f.getDensity(),
-        friction: f.getFriction(),
-        restitution: f.getRestitution(),
-      });
+      json = { type: "circle", center: scale(circle.getCenter()), radius: circle.getRadius() * factor };
     } else if (type === "polygon") {
       const poly = shape as import("planck").PolygonShape;
-      const verts = poly.m_vertices.slice(0, poly.m_count).map((v) => ({ x: v.x * factor, y: v.y * factor }));
-      specs.push({
-        shape: new Polygon(verts),
-        density: f.getDensity(),
-        friction: f.getFriction(),
-        restitution: f.getRestitution(),
-      });
+      json = { type: "polygon", vertices: poly.m_vertices.slice(0, poly.m_count).map(scale) };
     } else if (type === "edge") {
       const edge = shape as import("planck").EdgeShape;
-      specs.push({
-        shape: new Edge(
-          { x: edge.m_vertex1.x * factor, y: edge.m_vertex1.y * factor },
-          { x: edge.m_vertex2.x * factor, y: edge.m_vertex2.y * factor },
-        ),
-        density: f.getDensity(),
-        friction: f.getFriction(),
-        restitution: f.getRestitution(),
-      });
+      json = { type: "edge", v1: scale(edge.m_vertex1), v2: scale(edge.m_vertex2) };
     } else if (type === "chain") {
       const chain = shape as import("planck").ChainShape;
       const raw = chain.m_isLoop ? chain.m_vertices.slice(0, chain.m_count - 1) : chain.m_vertices.slice(0, chain.m_count);
-      const verts = raw.map((v) => ({ x: v.x * factor, y: v.y * factor }));
-      specs.push({
-        shape: new Chain(verts, chain.m_isLoop),
-        density: f.getDensity(),
-        friction: f.getFriction(),
-        restitution: f.getRestitution(),
-      });
+      json = { type: "chain", vertices: raw.map(scale), loop: chain.m_isLoop };
     }
+    if (!json) continue;
+    specs.push({
+      shape: json,
+      density: f.getDensity(),
+      friction: f.getFriction(),
+      restitution: f.getRestitution(),
+    });
   }
-  return specs;
+  // Planck prepends new fixtures, so the list is newest-first; return creation order instead so
+  // re-applying the specs reproduces the same list.
+  return specs.reverse();
 }
 
-function applyFixtureSpecs(body: Body, specs: FixtureSpec[]): void {
+function shapeFromJson(json: ShapeJson): Circle | Polygon | Edge | Chain {
+  switch (json.type) {
+    case "circle":
+      return new Circle(json.center, json.radius);
+    case "polygon":
+      return new Polygon(json.vertices);
+    case "edge":
+      return new Edge(json.v1, json.v2);
+    case "chain":
+      return new Chain(json.vertices, json.loop);
+  }
+}
+
+/** Create fixtures on `body` from plain data produced by `fixtureSpecs`. */
+export function applyFixtureSpecs(body: Body, specs: FixtureJson[]): void {
   for (const spec of specs) {
     body.createFixture({
-      shape: spec.shape,
+      shape: shapeFromJson(spec.shape),
       density: spec.density,
       friction: spec.friction,
       restitution: spec.restitution,
@@ -715,19 +723,19 @@ export function scaleBody(body: Body, factor: number): void {
   body.setAwake(true);
 }
 
+/** Deep-copy body user data so clones / saves do not share outline arrays. */
+export function cloneBodyData(data: BodyUserData | undefined): BodyUserData {
+  if (!data) return { kind: "shape", label: "Body", fillStyle: DEFAULT_FILL };
+  const copy: BodyUserData = { kind: data.kind, label: data.label, fillStyle: data.fillStyle };
+  if (data.outline) copy.outline = data.outline.map((p) => ({ x: p.x, y: p.y }));
+  if (data.holes) copy.holes = data.holes.map((ring) => ring.map((p) => ({ x: p.x, y: p.y })));
+  if (data.restitutionOverride !== undefined) copy.restitutionOverride = data.restitutionOverride;
+  return copy;
+}
+
 /** Deep-copy a pickable body, offset in world space (metres). */
 export function cloneBody(world: World, source: Body, offsetM: Point): Body {
-  const srcData = getBodyData(source);
-  const userData: BodyUserData = srcData
-    ? {
-        kind: srcData.kind,
-        label: srcData.label,
-        fillStyle: srcData.fillStyle,
-        outline: srcData.outline?.map((p) => ({ x: p.x, y: p.y })),
-        holes: srcData.holes?.map((ring) => ring.map((p) => ({ x: p.x, y: p.y }))),
-        restitutionOverride: srcData.restitutionOverride,
-      }
-    : { kind: "shape", label: "Body", fillStyle: DEFAULT_FILL };
+  const userData = cloneBodyData(getBodyData(source));
 
   const pos = source.getPosition();
   const body = world.createBody({
