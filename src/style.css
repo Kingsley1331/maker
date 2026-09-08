@@ -89,13 +89,22 @@ body {
   color: #1a1a1a;
 }
 
-.shapes {
+.shapes,
+.joints {
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
   gap: 6px;
 }
 
-.shape-btn {
+.shapes {
+  grid-template-columns: repeat(6, 1fr);
+}
+
+.joints {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.shape-btn,
+.joint-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -108,17 +117,20 @@ body {
   cursor: pointer;
 }
 
-.shape-btn svg {
+.shape-btn svg,
+.joint-btn svg {
   width: 18px;
   height: 18px;
   display: block;
 }
 
-.shape-btn:hover {
+.shape-btn:hover,
+.joint-btn:hover {
   background: #343a45;
 }
 
-.shape-btn.is-active {
+.shape-btn.is-active,
+.joint-btn.is-active {
   background: #3b6fe0;
   border-color: #5f8cf0;
 }

@@ -28,7 +28,7 @@ const input = setupInput({
   engine: physics.engine,
   render: physics.render,
   isPaused: () => physics.isPaused(),
-  getSelectedShape: () => ui.getSelectedShape(),
+  getActiveTool: () => ui.getActiveTool(),
   onSelectionUpdate: (body) => ui.showSelectionInfo(body),
 });
 

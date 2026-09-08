@@ -52,6 +52,33 @@
       </div>
 
       <div class="group">
+        <span class="label">Joints</span>
+        <div class="joints">
+          <button class="joint-btn" data-joint="pin" title="Pin to world" aria-label="Pin to world">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="14" r="6" fill="none" stroke="currentColor" stroke-width="2" />
+              <circle cx="12" cy="14" r="2" fill="currentColor" />
+              <line x1="12" y1="3" x2="12" y2="8" stroke="currentColor" stroke-width="2" />
+            </svg>
+          </button>
+          <button class="joint-btn" data-joint="revolute" title="Revolute joint" aria-label="Revolute joint">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="8" cy="12" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+              <circle cx="16" cy="12" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8" />
+              <circle cx="12" cy="12" r="2" fill="currentColor" />
+            </svg>
+          </button>
+          <button class="joint-btn" data-joint="rod" title="Rigid rod" aria-label="Rigid rod">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="5" cy="12" r="3.5" fill="currentColor" />
+              <circle cx="19" cy="12" r="3.5" fill="currentColor" />
+              <line x1="8.5" y1="12" x2="15.5" y2="12" stroke="currentColor" stroke-width="2.5" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="group">
         <label class="slider" for="gravity-y">
           <span class="label">Gravity Y <output id="gravity-y-value">1.00</output></span>
           <input id="gravity-y" type="range" min="-2" max="2" step="0.05" value="1" />
@@ -88,7 +115,9 @@
         to add points and double-click to finish (at least 3 points). Drag and release a shape to
         throw it. While paused, press a shape to select it and drag to move it; drag the corner
         handles to resize and the top knob to rotate (hold Shift to snap). Click empty space or
-        press Escape to deselect.
+        press Escape to deselect. Pause and pick a joint tool to connect bodies: pin attaches a
+        body to the world at the click; revolute and rod take two clicks on different bodies.
+        Escape or a click on empty space cancels a pending second click.
       </p>
       </div>
 

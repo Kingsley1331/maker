@@ -31,6 +31,7 @@ export function createPhysics(container: HTMLElement): Physics {
   const engine = Engine.create();
   engine.gravity.x = 0;
   engine.gravity.y = 1;
+  engine.constraintIterations = 4;
 
   const initial = sceneSize(container);
   const render = Render.create({
