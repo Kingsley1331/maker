@@ -1,7 +1,7 @@
 import { MouseJoint, type Body, type Joint, type World } from "planck";
 import { boxCutter, primitiveCutter, trySubtractHole } from "./cut";
 import { createPin, createRevolute, createRod, createWeld, createWheel, type JointType } from "./joints";
-import type { AfterRender } from "./physics";
+import { bodyBoundsPx, type AfterRender } from "./physics";
 import { createSelection, type Selection } from "./selection";
 import {
   boxBounds,
@@ -14,6 +14,7 @@ import {
   DEFAULT_SIZE,
   edgeEndpoints,
   frameBounds,
+  isPickable,
   randomColor,
   setBodyMass,
   tracePreview,
@@ -115,6 +116,8 @@ export function setupInput({
   let pressedBody: Body | null = null;
   /** Press point on empty space: a spawn gesture is in progress. */
   let spawnStart: Point | null = null;
+  /** Press point on empty space: a marquee-select gesture is in progress. */
+  let marqueeStart: Point | null = null;
   let dragged = false;
   /** Preview for the drag-to-size gesture; becomes the real body on release. */
   let ghost: ShapePreview | null = null;
@@ -354,6 +357,7 @@ export function setupInput({
     pressPoint = null;
     pressedBody = null;
     spawnStart = null;
+    marqueeStart = null;
     dragged = false;
     ghost = null;
     ghostSize = 0;
@@ -522,11 +526,15 @@ export function setupInput({
       }
       setGrabEnabled(false);
     } else if (!pressedBody) {
-      // Any press on empty space clears the selection. A plain click then only deselects, but a
-      // drag still sizes and spawns a new shape (primitives only).
-      clickOnlyDeselects = hasSelection();
-      selection.deselect();
-      if (!isDraftTool()) spawnStart = p;
+      // Empty space: click-away deselects. With a shape tool, drag still sizes a new body.
+      // With no tool (paused), drag draws a marquee and selects everything it overlaps.
+      if (isPaused() && getActiveTool().kind === "none") {
+        marqueeStart = p;
+      } else {
+        clickOnlyDeselects = hasSelection();
+        selection.deselect();
+        if (isShapeTool() && !isDraftTool()) spawnStart = p;
+      }
       setGrabEnabled(false);
     } else if (isPaused()) {
       // Paused: select a new body on press so a drag can move it. If this body is already in the
@@ -582,6 +590,12 @@ export function setupInput({
 
     if (sprayLast) {
       stampSprayAlong(p);
+      return;
+    }
+
+    if (marqueeStart) {
+      const dist = Math.hypot(p.x - marqueeStart.x, p.y - marqueeStart.y);
+      if (dist > clickSlop()) dragged = true;
       return;
     }
 
@@ -651,6 +665,31 @@ export function setupInput({
     }
   }
 
+  function marqueeRect(a: Point, b: Point): { x: number; y: number; w: number; h: number } {
+    const x = Math.min(a.x, b.x);
+    const y = Math.min(a.y, b.y);
+    return { x, y, w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) };
+  }
+
+  function boundsOverlap(
+    min: Point,
+    max: Point,
+    box: { x: number; y: number; w: number; h: number },
+  ): boolean {
+    return min.x <= box.x + box.w && max.x >= box.x && min.y <= box.y + box.h && max.y >= box.y;
+  }
+
+  function bodiesInMarquee(a: Point, b: Point): Body[] {
+    const box = marqueeRect(a, b);
+    const hits: Body[] = [];
+    for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
+      if (!isPickable(body)) continue;
+      const { min, max } = bodyBoundsPx(body);
+      if (boundsOverlap(min, max, box)) hits.push(body);
+    }
+    return hits;
+  }
+
   function eventOnToolbar(event: Event): boolean {
     const t = event.target;
     if (!(t instanceof Node)) return false;
@@ -688,6 +727,14 @@ export function setupInput({
         setGrabEnabled(false);
       } else if (isCut() && isClick && isPaused() && pendingSelectToggle && pressedBody) {
         selection.select(pressedBody);
+      }
+    } else if (marqueeStart) {
+      if (isClick) {
+        selection.deselect();
+      } else {
+        const hits = bodiesInMarquee(marqueeStart, p);
+        if (hits.length === 0) selection.deselect();
+        else selection.selectMembers(hits);
       }
     } else if (spawnStart) {
       if (isCut()) {
@@ -790,6 +837,16 @@ export function setupInput({
   onAfterRender((ctx) => {
     dropDraftIfToolChanged();
     dropJointAnchorIfToolChanged();
+
+    if (marqueeStart && hover && dragged) {
+      const box = marqueeRect(marqueeStart, hover);
+      ctx.save();
+      ctx.strokeStyle = ACCENT;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.strokeRect(box.x, box.y, box.w, box.h);
+      ctx.restore();
+    }
 
     if (ghost) {
       ctx.save();

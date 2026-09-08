@@ -1,6 +1,7 @@
 import type { Body, Joint } from "planck";
 import { connectedBodies, groupBoundsPx, rotateGroup, scaleGroup, translateGroup } from "./group";
 import { bodyBoundsPx, type AfterRender } from "./physics";
+import { isPickable } from "./shapes";
 import type { ActiveTool } from "./ui";
 import { vecToMeters, type Point } from "./units";
 
@@ -60,6 +61,8 @@ export interface Selection {
    * selecting it again widens back to the group.
    */
   select(body: Body): void;
+  /** Select an arbitrary set of pickable bodies (marquee). Ignored unless paused. */
+  selectMembers(bodies: readonly Body[]): void;
   /** Select a motor joint. Ignored unless paused. Clears any selected body. */
   selectJoint(joint: Joint): void;
   deselect(): void;
@@ -86,8 +89,10 @@ export function createSelection({
   let selected: Body | null = null;
   /** Bodies being edited. Empty when nothing is selected. */
   let members: Body[] = [];
-  /** Whether `members` is the whole jointed group or just `selected`. */
-  let mode: "group" | "body" = "body";
+  /** Jointed group, a free marquee set, or a single body. */
+  let mode: "group" | "set" | "body" = "body";
+  /** Last marquee / free set, used to widen after narrowing to one member. */
+  let setMembers: Body[] = [];
   let selectedJoint: Joint | null = null;
 
   // Handle drag state
@@ -108,13 +113,34 @@ export function createSelection({
     const jointChanged = selectedJoint !== null;
     selectedJoint = null;
 
-    const group = connectedBodies(body);
-    if (group.length <= 1) {
-      // Unjointed shape: plain single selection.
-      if (body === selected && mode === "body" && !jointChanged) return;
+    if (mode === "set" && members.includes(body)) {
       selected = body;
       members = [body];
       mode = "body";
+      onSelectionUpdate(selected, members);
+      if (jointChanged) onJointSelectionUpdate(null);
+      return;
+    }
+
+    if (mode === "body" && body === selected && setMembers.length > 1 && setMembers.includes(body)) {
+      members = setMembers.slice();
+      mode = "set";
+      onSelectionUpdate(selected, members);
+      if (jointChanged) onJointSelectionUpdate(null);
+      return;
+    }
+
+    const group = connectedBodies(body);
+    if (group.length <= 1) {
+      // Unjointed shape: click again to clear the selection.
+      if (body === selected && mode === "body" && !jointChanged) {
+        deselect();
+        return;
+      }
+      selected = body;
+      members = [body];
+      mode = "body";
+      setMembers = [];
     } else if (mode === "group" && members.includes(body)) {
       // Click on a member of the selected group narrows to that shape.
       selected = body;
@@ -128,6 +154,36 @@ export function createSelection({
       selected = body;
       members = group;
       mode = "group";
+      setMembers = [];
+    }
+    onSelectionUpdate(selected, members);
+    if (jointChanged) onJointSelectionUpdate(null);
+  }
+
+  function selectMembers(bodies: readonly Body[]): void {
+    if (!isPaused()) return;
+    const unique: Body[] = [];
+    const seen = new Set<Body>();
+    for (const body of bodies) {
+      if (!isPickable(body) || seen.has(body)) continue;
+      seen.add(body);
+      unique.push(body);
+    }
+    if (unique.length === 0) {
+      deselect();
+      return;
+    }
+
+    const jointChanged = selectedJoint !== null;
+    selectedJoint = null;
+    selected = unique[0];
+    members = unique;
+    if (unique.length === 1) {
+      setMembers = [];
+      mode = "body";
+    } else {
+      setMembers = unique.slice();
+      mode = "set";
     }
     onSelectionUpdate(selected, members);
     if (jointChanged) onJointSelectionUpdate(null);
@@ -138,6 +194,7 @@ export function createSelection({
     const bodyChanged = selected !== null;
     selected = null;
     members = [];
+    setMembers = [];
     mode = "body";
     interaction = "none";
     canvas.style.cursor = "";
@@ -150,6 +207,7 @@ export function createSelection({
     if (!selected && !selectedJoint) return;
     selected = null;
     members = [];
+    setMembers = [];
     mode = "body";
     selectedJoint = null;
     interaction = "none";
@@ -237,7 +295,7 @@ export function createSelection({
     ctx.setLineDash([6, 4]);
     ctx.strokeRect(r.x, r.y, r.w, r.h);
 
-    if (mode === "group") {
+    if (mode === "group" || mode === "set") {
       // Faint box per member so the individual shapes stay legible inside the group box.
       ctx.save();
       ctx.globalAlpha = 0.45;
@@ -374,6 +432,7 @@ export function createSelection({
       return interaction !== "none";
     },
     select,
+    selectMembers,
     selectJoint,
     deselect,
     translate,

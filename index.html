@@ -323,8 +323,8 @@
 
       <div class="group">
         <label class="slider" for="gravity-y">
-          <span class="label">Gravity Y <output id="gravity-y-value">1.00</output></span>
-          <input id="gravity-y" type="range" min="-2" max="2" step="0.05" value="1" />
+          <span class="label">Gravity Y <output id="gravity-y-value">0.00</output></span>
+          <input id="gravity-y" type="range" min="-2" max="2" step="0.05" value="0" />
         </label>
         <label class="slider" for="gravity-x">
           <span class="label">Gravity X <output id="gravity-x-value">0.00</output></span>
@@ -422,7 +422,11 @@
           </button>
         </div>
         <ul class="help-list">
-          <li><strong>Spawn:</strong> click empty space to add the selected shape, or drag to set its size.</li>
+          <li>
+            <strong>Spawn:</strong> click empty space to add the selected shape, or drag to set its size.
+            Click the highlighted shape button again to deselect it so clicks on the canvas will not
+            spawn anything.
+          </li>
           <li>
             <strong>Spray:</strong> with a circle, rectangle, triangle, pentagon, or hexagon selected,
             turn Spray on and drag to stamp tiny copies along the cursor. Set defaults in the Spray
@@ -470,7 +474,15 @@
             <strong>Groups:</strong> shapes connected by joints select together. Click a shape in the
             group (without dragging) to edit it alone; click it again to reselect the group.
           </li>
-          <li><strong>Deselect:</strong> click empty space or press Escape.</li>
+          <li>
+            <strong>Deselect:</strong> click empty space, press Escape, or click a selected ungrouped
+            shape again. Click the highlighted shape or joint button to turn that tool off.
+          </li>
+          <li>
+            <strong>Box select:</strong> with no shape tool selected and the simulation paused, drag
+            on empty canvas to draw a dashed box. Every shape the box overlaps is selected as a
+            group (move, resize, rotate, duplicate, or delete together). Click empty space to clear.
+          </li>
           <li>
             <strong>Copy / delete (paused):</strong> with a shape or group selected, use Duplicate or
             Delete in the Selected panel, or press Ctrl+D / Delete. With a motor joint selected, Delete

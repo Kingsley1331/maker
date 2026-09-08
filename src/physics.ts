@@ -120,7 +120,7 @@ export function bodyBoundsPx(body: Body): { min: Point; max: Point } {
 }
 
 export function createPhysics(container: HTMLElement): Physics {
-  const world = new World({ gravity: { x: 0, y: GRAVITY_SCALE } });
+  const world = new World({ gravity: { x: 0, y: 0 } });
   const ground = world.createBody({
     type: "static",
     userData: { kind: "ground", label: "Ground", fillStyle: "transparent" } satisfies BodyUserData,

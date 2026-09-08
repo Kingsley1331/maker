@@ -24,6 +24,7 @@ import {
 import { FRICTION, LINEAR_DAMPING, RESTITUTION, toPixels } from "./units";
 
 export type ActiveTool =
+  | { kind: "none" }
   | { kind: "shape"; shape: ShapeType }
   | { kind: "joint"; joint: JointType }
   | { kind: "zoom" };
@@ -417,6 +418,10 @@ export function setupUi({
     bindActivate(button, () => {
       const shape = button.dataset.shape;
       if (!isShapeType(shape)) return;
+      if (activeTool.kind === "shape" && activeTool.shape === shape) {
+        setActiveTool({ kind: "none" });
+        return;
+      }
       selectedShape = shape;
       setActiveTool({ kind: "shape", shape });
     });
@@ -426,6 +431,10 @@ export function setupUi({
     bindActivate(button, () => {
       const joint = button.dataset.joint;
       if (!isJointType(joint)) return;
+      if (activeTool.kind === "joint" && activeTool.joint === joint) {
+        setActiveTool({ kind: "none" });
+        return;
+      }
       setActiveTool({ kind: "joint", joint });
     });
   }
