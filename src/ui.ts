@@ -10,7 +10,7 @@ import {
 } from "./joints";
 import { bodyLabel, groupBoundsPx } from "./group";
 import { bodyBoundsPx, MAX_ZOOM, MIN_ZOOM } from "./physics";
-import { getBodyData, SHAPE_TYPES, type JointUserData, type ShapeType } from "./shapes";
+import { DEFAULT_FILL, getBodyData, PRIMITIVE_SHAPES, SHAPE_TYPES, type JointUserData, type ShapeType } from "./shapes";
 import { toPixels } from "./units";
 
 export type ActiveTool =
@@ -41,9 +41,25 @@ export interface UiOptions {
   onToolChange(tool: ActiveTool): void;
 }
 
+export interface SpraySample {
+  size: number;
+  fillStyle: string;
+  angleDeg: number;
+  mass: number;
+  vxPx: number;
+  vyPx: number;
+  spinDeg: number;
+}
+
 export interface Ui {
   getSelectedShape(): ShapeType;
   getActiveTool(): ActiveTool;
+  /** True when Spray is on and a primitive shape is the active tool. */
+  isSpray(): boolean;
+  /** One stamp's properties (defaults, or a random roll inside each Rand range). */
+  getSpraySample(): SpraySample;
+  /** Size default used for spray spacing (not a random roll). */
+  getSpraySize(): number;
   /**
    * Show (or hide, when null) the readout for the current selection. `members` is every selected
    * shape; more than one means a jointed group.
@@ -89,6 +105,7 @@ export function setupUi({
 }: UiOptions): Ui {
   let selectedShape: ShapeType = "circle";
   let activeTool: ActiveTool = { kind: "shape", shape: selectedShape };
+  let spray = false;
 
   // Pause / Play
   let paused = false;
@@ -176,6 +193,7 @@ export function setupUi({
 
   // Shape / joint tools (mutually exclusive)
   const zoomTool = requireElement<HTMLButtonElement>("zoom-tool");
+  const sprayToggle = requireElement<HTMLButtonElement>("spray-toggle");
   const shapeButtons = Array.from(
     document.querySelectorAll<HTMLButtonElement>(".shape-btn[data-shape]"),
   );
@@ -183,9 +201,31 @@ export function setupUi({
     document.querySelectorAll<HTMLButtonElement>(".joint-btn[data-joint]"),
   );
 
+  function sprayAllowed(tool: ActiveTool): boolean {
+    return tool.kind === "shape" && PRIMITIVE_SHAPES.includes(tool.shape);
+  }
+
+  function isSpray(): boolean {
+    return spray && sprayAllowed(activeTool);
+  }
+
+  const sprayInfo = requireElement<HTMLDivElement>("spray-info");
+
+  function syncSpray(): void {
+    const allowed = sprayAllowed(activeTool);
+    if (!allowed) spray = false;
+    const on = isSpray();
+    sprayToggle.disabled = !allowed;
+    sprayToggle.classList.toggle("is-active", on);
+    sprayToggle.setAttribute("aria-pressed", String(on));
+    sprayInfo.hidden = !on;
+  }
+
   function setActiveTool(tool: ActiveTool): void {
     activeTool = tool;
+    if (!sprayAllowed(tool)) spray = false;
     syncToolButtons();
+    syncSpray();
     onToolChange(tool);
   }
 
@@ -210,6 +250,12 @@ export function setupUi({
 
   zoomTool.addEventListener("click", () => setActiveTool({ kind: "zoom" }));
 
+  sprayToggle.addEventListener("click", () => {
+    if (!sprayAllowed(activeTool)) return;
+    spray = !spray;
+    syncSpray();
+  });
+
   for (const button of shapeButtons) {
     button.addEventListener("click", () => {
       const shape = button.dataset.shape;
@@ -225,6 +271,148 @@ export function setupUi({
       if (!isJointType(joint)) return;
       setActiveTool({ kind: "joint", joint });
     });
+  }
+  syncSpray();
+
+  function parseFinite(input: HTMLInputElement, fallback: number): number {
+    const n = Number(input.value);
+    return Number.isFinite(n) ? n : fallback;
+  }
+
+  function sampleRange(
+    value: HTMLInputElement,
+    rand: HTMLInputElement,
+    min: HTMLInputElement,
+    max: HTMLInputElement,
+    fallback: number,
+  ): number {
+    if (!rand.checked) return parseFinite(value, fallback);
+    let a = parseFinite(min, fallback);
+    let b = parseFinite(max, fallback);
+    if (a > b) {
+      const swap = a;
+      a = b;
+      b = swap;
+    }
+    return a + Math.random() * (b - a);
+  }
+
+  function bindRand(rand: HTMLInputElement, ...inputs: HTMLInputElement[]): void {
+    const sync = (): void => {
+      for (const input of inputs) input.disabled = !rand.checked;
+    };
+    rand.addEventListener("change", sync);
+    sync();
+  }
+
+  function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+    const m = /^#([0-9a-fA-F]{6})$/.exec(hex);
+    if (!m) return null;
+    const n = parseInt(m[1], 16);
+    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+  }
+
+  function rgbToHsl(r: number, g: number, b: number): { h: number; s: number; l: number } {
+    r /= 255;
+    g /= 255;
+    b /= 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const l = (max + min) / 2;
+    if (max === min) return { h: 0, s: 0, l };
+    const d = max - min;
+    const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    let h = 0;
+    if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    return { h: h * 60, s, l };
+  }
+
+  function hue2rgb(p: number, q: number, t: number): number {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  }
+
+  function hslToHex(h: number, s: number, l: number): string {
+    h = ((h % 360) + 360) % 360;
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    const hk = h / 360;
+    const r = Math.round(hue2rgb(p, q, hk + 1 / 3) * 255);
+    const g = Math.round(hue2rgb(p, q, hk) * 255);
+    const b = Math.round(hue2rgb(p, q, hk - 1 / 3) * 255);
+    return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+  }
+
+  function mixHex(a: string, b: string, t: number): string {
+    const ca = hexToRgb(a);
+    const cb = hexToRgb(b);
+    if (!ca || !cb) return a;
+    const ha = rgbToHsl(ca.r, ca.g, ca.b);
+    const hb = rgbToHsl(cb.r, cb.g, cb.b);
+    let dh = hb.h - ha.h;
+    if (dh > 180) dh -= 360;
+    if (dh < -180) dh += 360;
+    return hslToHex(ha.h + dh * t, ha.s + (hb.s - ha.s) * t, ha.l + (hb.l - ha.l) * t);
+  }
+
+  const spraySize = requireElement<HTMLInputElement>("spray-size");
+  const spraySizeRand = requireElement<HTMLInputElement>("spray-size-rand");
+  const spraySizeMin = requireElement<HTMLInputElement>("spray-size-min");
+  const spraySizeMax = requireElement<HTMLInputElement>("spray-size-max");
+  const sprayColor = requireElement<HTMLInputElement>("spray-color");
+  const sprayColorRand = requireElement<HTMLInputElement>("spray-color-rand");
+  const sprayColorB = requireElement<HTMLInputElement>("spray-color-b");
+  const sprayAngle = requireElement<HTMLInputElement>("spray-angle");
+  const sprayAngleRand = requireElement<HTMLInputElement>("spray-angle-rand");
+  const sprayAngleMin = requireElement<HTMLInputElement>("spray-angle-min");
+  const sprayAngleMax = requireElement<HTMLInputElement>("spray-angle-max");
+  const sprayMass = requireElement<HTMLInputElement>("spray-mass");
+  const sprayMassRand = requireElement<HTMLInputElement>("spray-mass-rand");
+  const sprayMassMin = requireElement<HTMLInputElement>("spray-mass-min");
+  const sprayMassMax = requireElement<HTMLInputElement>("spray-mass-max");
+  const sprayVx = requireElement<HTMLInputElement>("spray-vx");
+  const sprayVxRand = requireElement<HTMLInputElement>("spray-vx-rand");
+  const sprayVxMin = requireElement<HTMLInputElement>("spray-vx-min");
+  const sprayVxMax = requireElement<HTMLInputElement>("spray-vx-max");
+  const sprayVy = requireElement<HTMLInputElement>("spray-vy");
+  const sprayVyRand = requireElement<HTMLInputElement>("spray-vy-rand");
+  const sprayVyMin = requireElement<HTMLInputElement>("spray-vy-min");
+  const sprayVyMax = requireElement<HTMLInputElement>("spray-vy-max");
+  const spraySpin = requireElement<HTMLInputElement>("spray-spin");
+  const spraySpinRand = requireElement<HTMLInputElement>("spray-spin-rand");
+  const spraySpinMin = requireElement<HTMLInputElement>("spray-spin-min");
+  const spraySpinMax = requireElement<HTMLInputElement>("spray-spin-max");
+
+  bindRand(spraySizeRand, spraySizeMin, spraySizeMax);
+  bindRand(sprayColorRand, sprayColorB);
+  bindRand(sprayAngleRand, sprayAngleMin, sprayAngleMax);
+  bindRand(sprayMassRand, sprayMassMin, sprayMassMax);
+  bindRand(sprayVxRand, sprayVxMin, sprayVxMax);
+  bindRand(sprayVyRand, sprayVyMin, sprayVyMax);
+  bindRand(spraySpinRand, spraySpinMin, spraySpinMax);
+
+  function getSpraySize(): number {
+    return Math.max(1, parseFinite(spraySize, 6));
+  }
+
+  function getSpraySample(): SpraySample {
+    const a = /^#[0-9a-fA-F]{6}$/.test(sprayColor.value) ? sprayColor.value : DEFAULT_FILL;
+    const b = /^#[0-9a-fA-F]{6}$/.test(sprayColorB.value) ? sprayColorB.value : a;
+    return {
+      size: Math.max(1, sampleRange(spraySize, spraySizeRand, spraySizeMin, spraySizeMax, 6)),
+      fillStyle: sprayColorRand.checked ? mixHex(a, b, Math.random()) : a,
+      angleDeg: sampleRange(sprayAngle, sprayAngleRand, sprayAngleMin, sprayAngleMax, 0),
+      mass: Math.max(0.01, sampleRange(sprayMass, sprayMassRand, sprayMassMin, sprayMassMax, 0.1)),
+      vxPx: sampleRange(sprayVx, sprayVxRand, sprayVxMin, sprayVxMax, 0),
+      vyPx: sampleRange(sprayVy, sprayVyRand, sprayVyMin, sprayVyMax, 0),
+      spinDeg: sampleRange(spraySpin, spraySpinRand, spraySpinMin, spraySpinMax, 0),
+    };
   }
 
   // Gravity sliders
@@ -399,6 +587,9 @@ export function setupUi({
   return {
     getSelectedShape: () => selectedShape,
     getActiveTool: () => activeTool,
+    isSpray,
+    getSpraySample,
+    getSpraySize,
     showSelectionInfo,
     showMotorInfo,
     setPaused,

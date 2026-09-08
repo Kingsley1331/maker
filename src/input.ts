@@ -9,17 +9,21 @@ import {
   createPolygon,
   DEFAULT_SIZE,
   randomColor,
+  setBodyMass,
   tracePreview,
   type Point,
+  type PrimitiveShape,
   type ShapePreview,
 } from "./shapes";
-import type { ActiveTool } from "./ui";
+import type { ActiveTool, SpraySample } from "./ui";
 import { toPixels, vecToMeters } from "./units";
 
 /** Max pointer travel (px) between mousedown and mouseup for it to count as a click. */
 const CLICK_THRESHOLD = 6;
 /** Smallest nominal radius a drag can produce. */
 const MIN_SIZE = 8;
+/** Minimum distance between sprayed bodies (px). */
+const SPRAY_SPACING = 10;
 const ACCENT = "#3b6fe0";
 
 export interface InputOptions {
@@ -33,6 +37,9 @@ export interface InputOptions {
   panBy(dx: number, dy: number): void;
   isPaused(): boolean;
   getActiveTool(): ActiveTool;
+  isSpray(): boolean;
+  getSpraySample(): SpraySample;
+  getSpraySize(): number;
   onSelectionUpdate(body: Body | null, members: Body[]): void;
   onJointSelectionUpdate(joint: Joint | null): void;
   onZoomChange(zoom: number): void;
@@ -60,6 +67,9 @@ export function setupInput({
   panBy,
   isPaused,
   getActiveTool,
+  isSpray,
+  getSpraySample,
+  getSpraySize,
   onSelectionUpdate,
   onJointSelectionUpdate,
   onZoomChange,
@@ -72,6 +82,7 @@ export function setupInput({
     getSize,
     getZoom,
     getActiveTool,
+    isSpray,
     screenToWorld,
     isPaused,
     onSelectionUpdate,
@@ -107,6 +118,8 @@ export function setupInput({
   /** Right / middle mouse camera pan. */
   let panning = false;
   let panLast: Point | null = null;
+  /** Spray trail: last stamped world-pixel position. */
+  let sprayLast: Point | null = null;
 
   function screenPoint(event: MouseEvent): Point {
     const rect = canvas.getBoundingClientRect();
@@ -144,6 +157,48 @@ export function setupInput({
     return tool.kind === "shape" && tool.shape === "box";
   }
 
+  function sprayShape(): PrimitiveShape | null {
+    if (!isSpray()) return null;
+    const tool = getActiveTool();
+    if (tool.kind !== "shape" || tool.shape === "polygon" || tool.shape === "box") return null;
+    return tool.shape;
+  }
+
+  function stampSpray(x: number, y: number): void {
+    const shape = sprayShape();
+    if (!shape) return;
+    const sample = getSpraySample();
+    const body = createBody(world, shape, x, y, sample.size, sample.fillStyle);
+    body.setTransform(body.getPosition(), (sample.angleDeg * Math.PI) / 180);
+    setBodyMass(body, sample.mass);
+    body.setLinearVelocity(vecToMeters({ x: sample.vxPx, y: sample.vyPx }));
+    body.setAngularVelocity((sample.spinDeg * Math.PI) / 180);
+  }
+
+  function spraySpacing(): number {
+    return Math.max(SPRAY_SPACING, getSpraySize() * 1.5);
+  }
+
+  function stampSprayAlong(to: Point): void {
+    if (!sprayLast) return;
+    const spacing = spraySpacing();
+    const dx = to.x - sprayLast.x;
+    const dy = to.y - sprayLast.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < spacing) return;
+    const ux = dx / dist;
+    const uy = dy / dist;
+    const steps = Math.floor(dist / spacing);
+    const from = sprayLast;
+    for (let i = 1; i <= steps; i++) {
+      stampSpray(from.x + ux * spacing * i, from.y + uy * spacing * i);
+    }
+    sprayLast = {
+      x: from.x + ux * spacing * steps,
+      y: from.y + uy * spacing * steps,
+    };
+  }
+
   function jointType(): JointType | null {
     const tool = getActiveTool();
     return tool.kind === "joint" ? tool.joint : null;
@@ -160,8 +215,9 @@ export function setupInput({
   function applyCursor(): void {
     if (panning || moveOffset) canvas.style.cursor = "grabbing";
     else if (isZoomTool()) canvas.style.cursor = "grab";
-    else if (isPolygonTool() || isBoxTool() || (jointType() && isPaused())) canvas.style.cursor = "crosshair";
-    else canvas.style.cursor = "";
+    else if (isSpray() || isPolygonTool() || isBoxTool() || (jointType() && isPaused())) {
+      canvas.style.cursor = "crosshair";
+    } else canvas.style.cursor = "";
   }
 
   function startPan(event: MouseEvent): void {
@@ -236,6 +292,7 @@ export function setupInput({
     ghostColor = undefined;
     clickOnlyDeselects = false;
     moveOffset = null;
+    sprayLast = null;
     if (grabIdle()) setGrabEnabled(true);
     applyCursor();
     window.removeEventListener("mousemove", onMove);
@@ -307,6 +364,19 @@ export function setupInput({
     }
     if (event.button === 1 || event.button === 2) return;
     if (event.button !== 0) return;
+    if (isSpray()) {
+      event.preventDefault();
+      const p = canvasPoint(event);
+      pressPoint = p;
+      selection.deselect();
+      setGrabEnabled(false);
+      stampSpray(p.x, p.y);
+      sprayLast = { x: p.x, y: p.y };
+      applyCursor();
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+      return;
+    }
     dropDraftIfToolChanged();
     dropJointAnchorIfToolChanged();
     // The selection module intercepts handle presses in the capture phase before we get here.
@@ -406,6 +476,11 @@ export function setupInput({
     const p = canvasPoint(event);
     hover = p;
     if (mouseJoint) mouseJoint.setTarget(vecToMeters(p));
+
+    if (sprayLast) {
+      stampSprayAlong(p);
+      return;
+    }
 
     if (moveOffset && pressedBody) {
       // Velocity is left untouched (freeze-frame edit): the shape resumes its prior motion on Play.

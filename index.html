@@ -68,6 +68,77 @@
             </svg>
           </button>
         </div>
+        <div class="view">
+          <button
+            id="spray-toggle"
+            class="view-btn"
+            type="button"
+            title="Spray tiny shapes"
+            aria-label="Spray tiny shapes"
+            aria-pressed="false"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="7" cy="8" r="2" fill="currentColor" />
+              <circle cx="13" cy="6" r="1.6" fill="currentColor" />
+              <circle cx="17" cy="11" r="2" fill="currentColor" />
+              <circle cx="9" cy="15" r="1.7" fill="currentColor" />
+              <circle cx="15" cy="17" r="2" fill="currentColor" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div id="spray-info" class="group" hidden>
+        <span class="label">Spray</span>
+        <div class="spray-prop">
+          <span class="spray-prop-name">Size</span>
+          <input id="spray-size" type="number" min="1" step="1" value="6" />
+          <label class="spray-rand"><input id="spray-size-rand" type="checkbox" /> Rand</label>
+          <input id="spray-size-min" type="number" min="1" step="1" value="4" disabled />
+          <input id="spray-size-max" type="number" min="1" step="1" value="10" disabled />
+        </div>
+        <div class="spray-prop">
+          <span class="spray-prop-name">Colour</span>
+          <input id="spray-color" type="color" value="#b8d8e4" />
+          <label class="spray-rand"><input id="spray-color-rand" type="checkbox" /> Rand</label>
+          <input id="spray-color-b" type="color" value="#b8d8e4" disabled />
+          <span></span>
+        </div>
+        <div class="spray-prop">
+          <span class="spray-prop-name">Angle</span>
+          <input id="spray-angle" type="number" step="1" value="0" />
+          <label class="spray-rand"><input id="spray-angle-rand" type="checkbox" /> Rand</label>
+          <input id="spray-angle-min" type="number" step="1" value="0" disabled />
+          <input id="spray-angle-max" type="number" step="1" value="360" disabled />
+        </div>
+        <div class="spray-prop">
+          <span class="spray-prop-name">Mass</span>
+          <input id="spray-mass" type="number" min="0.01" step="0.01" value="0.1" />
+          <label class="spray-rand"><input id="spray-mass-rand" type="checkbox" /> Rand</label>
+          <input id="spray-mass-min" type="number" min="0.01" step="0.01" value="0.01" disabled />
+          <input id="spray-mass-max" type="number" min="0.01" step="0.01" value="0.5" disabled />
+        </div>
+        <div class="spray-prop">
+          <span class="spray-prop-name">Vel X</span>
+          <input id="spray-vx" type="number" step="10" value="0" />
+          <label class="spray-rand"><input id="spray-vx-rand" type="checkbox" /> Rand</label>
+          <input id="spray-vx-min" type="number" step="10" value="-50" disabled />
+          <input id="spray-vx-max" type="number" step="10" value="50" disabled />
+        </div>
+        <div class="spray-prop">
+          <span class="spray-prop-name">Vel Y</span>
+          <input id="spray-vy" type="number" step="10" value="0" />
+          <label class="spray-rand"><input id="spray-vy-rand" type="checkbox" /> Rand</label>
+          <input id="spray-vy-min" type="number" step="10" value="-50" disabled />
+          <input id="spray-vy-max" type="number" step="10" value="50" disabled />
+        </div>
+        <div class="spray-prop">
+          <span class="spray-prop-name">Spin</span>
+          <input id="spray-spin" type="number" step="10" value="0" />
+          <label class="spray-rand"><input id="spray-spin-rand" type="checkbox" /> Rand</label>
+          <input id="spray-spin-min" type="number" step="10" value="-180" disabled />
+          <input id="spray-spin-max" type="number" step="10" value="180" disabled />
+        </div>
       </div>
 
       <div class="group">
@@ -216,6 +287,12 @@
         </div>
         <ul class="help-list">
           <li><strong>Spawn:</strong> click empty space to add the selected shape, or drag to set its size.</li>
+          <li>
+            <strong>Spray:</strong> with a circle, rectangle, triangle, pentagon, or hexagon selected,
+            turn Spray on and drag to stamp tiny copies along the cursor. Set defaults in the Spray
+            panel; Rand picks that property at random in the min–max range (two colours for colour)
+            for each stamp.
+          </li>
           <li>
             <strong>Box tool:</strong> press empty space and drag to the opposite corner; the rectangle
             is created on release.

@@ -79,6 +79,9 @@ const input = setupInput({
   panBy: (dx, dy) => physics.panBy(dx, dy),
   isPaused: () => physics.isPaused(),
   getActiveTool: () => ui.getActiveTool(),
+  isSpray: () => ui.isSpray(),
+  getSpraySample: () => ui.getSpraySample(),
+  getSpraySize: () => ui.getSpraySize(),
   onSelectionUpdate: (body, members) => ui.showSelectionInfo(body, members),
   onJointSelectionUpdate: (joint) => {
     physics.setSelectedJoint(joint);
