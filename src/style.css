@@ -256,6 +256,36 @@ body {
   opacity: 0.45;
 }
 
+.spray-options-btn {
+  width: 100%;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.spray-options-hint {
+  color: #9aa3b2;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.spray-options-btn[aria-expanded="true"] .spray-options-hint {
+  color: #e6e6e6;
+}
+
+#spray-options {
+  display: contents;
+}
+
+#spray-options[hidden] {
+  display: none;
+}
+
 .spray-prop {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr) auto minmax(0, 1fr) minmax(0, 1fr);

@@ -89,7 +89,18 @@
       </div>
 
       <div id="spray-info" class="group" hidden>
-        <span class="label">Spray</span>
+        <button
+          id="spray-options-toggle"
+          class="label spray-options-btn"
+          type="button"
+          aria-expanded="false"
+          aria-controls="spray-options"
+          aria-label="Spray options"
+        >
+          Spray
+          <span class="spray-options-hint" aria-hidden="true">+</span>
+        </button>
+        <div id="spray-options" hidden>
         <div class="spray-prop">
           <span class="spray-prop-name">Size</span>
           <input id="spray-size" type="number" min="1" step="1" value="6" />
@@ -138,6 +149,7 @@
           <label class="spray-rand"><input id="spray-spin-rand" type="checkbox" /> Rand</label>
           <input id="spray-spin-min" type="number" step="10" value="-180" disabled />
           <input id="spray-spin-max" type="number" step="10" value="180" disabled />
+        </div>
         </div>
       </div>
 

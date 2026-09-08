@@ -210,6 +210,14 @@ export function setupUi({
   }
 
   const sprayInfo = requireElement<HTMLDivElement>("spray-info");
+  const sprayOptions = requireElement<HTMLDivElement>("spray-options");
+  const sprayOptionsToggle = requireElement<HTMLButtonElement>("spray-options-toggle");
+  let sprayOptionsOpen = false;
+
+  function syncSprayOptions(): void {
+    sprayOptions.hidden = !sprayOptionsOpen;
+    sprayOptionsToggle.setAttribute("aria-expanded", String(sprayOptionsOpen));
+  }
 
   function syncSpray(): void {
     const allowed = sprayAllowed(activeTool);
@@ -219,7 +227,14 @@ export function setupUi({
     sprayToggle.classList.toggle("is-active", on);
     sprayToggle.setAttribute("aria-pressed", String(on));
     sprayInfo.hidden = !on;
+    if (!on) sprayOptionsOpen = false;
+    syncSprayOptions();
   }
+
+  sprayOptionsToggle.addEventListener("click", () => {
+    sprayOptionsOpen = !sprayOptionsOpen;
+    syncSprayOptions();
+  });
 
   function setActiveTool(tool: ActiveTool): void {
     activeTool = tool;
