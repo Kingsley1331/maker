@@ -286,7 +286,7 @@ export function createSelection({
   // --- Rendering -------------------------------------------------------------------------------
 
   onAfterRender((ctx) => {
-    if (!selected || members.length === 0) return;
+    if (!selected || members.length === 0 || isCut()) return;
     const r = boxRect();
 
     ctx.save();

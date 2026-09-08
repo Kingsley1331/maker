@@ -140,8 +140,6 @@ export function setupInput({
   let panLast: Point | null = null;
   /** Spray trail: last stamped world-pixel position. */
   let sprayLast: Point | null = null;
-  /** Cut press landed on a new body: this gesture only selects, it must not punch a hole. */
-  let cutSelectOnly = false;
 
   function screenPoint(event: MouseEvent): Point {
     const rect = canvas.getBoundingClientRect();
@@ -366,7 +364,6 @@ export function setupInput({
     moveOffset = null;
     pendingSelectToggle = false;
     sprayLast = null;
-    cutSelectOnly = false;
     if (grabIdle()) setGrabEnabled(true);
     applyCursor();
     window.removeEventListener("mousemove", onMove);
@@ -460,7 +457,7 @@ export function setupInput({
     // Pause-click a pin / revolute / wheel pivot to select it for the motor sliders. This wins
     // over joint placement (so you can click a pin you just made) unless a two-click joint is
     // waiting for its second body, or a polygon/chain is mid-draw.
-    if (isPaused() && jointAnchor === null && !(isDraftTool() && draft.length > 0)) {
+    if (isPaused() && !isCut() && jointAnchor === null && !(isDraftTool() && draft.length > 0)) {
       const hitJoint = jointAt(p);
       if (hitJoint) {
         selection.selectJoint(hitJoint);
@@ -506,24 +503,8 @@ export function setupInput({
     pressedBody = bodyAt(p);
 
     if (isCut()) {
-      // Click a body to choose the cut target; drag (on the target or empty space) punches a hole.
-      if (pressedBody && isPaused()) {
-        const wasTarget = selection.selected === pressedBody;
-        if (selection.members.includes(pressedBody)) {
-          pendingSelectToggle = true;
-        } else {
-          selection.select(pressedBody);
-        }
-        if (!wasTarget) cutSelectOnly = true;
-        else if (!isDraftTool()) spawnStart = p;
-      } else if (!pressedBody) {
-        if (!isDraftTool()) {
-          clickOnlyDeselects = hasSelection();
-          spawnStart = p;
-        }
-      } else if (!isDraftTool()) {
-        spawnStart = p;
-      }
+      selection.deselect();
+      if (!isDraftTool()) spawnStart = p;
       setGrabEnabled(false);
     } else if (!pressedBody) {
       // Empty space: click-away deselects. With a shape tool, drag still sizes a new body.
@@ -570,7 +551,7 @@ export function setupInput({
 
     if (isPolygonTool()) {
       if (draft.length < 3) return;
-      if (isCut()) trySubtractHole(world, draft, selection.selected);
+      if (isCut()) trySubtractHole(world, draft);
       else if (isChainOutline()) createChain(world, draft, true);
       else createPolygon(world, draft);
     } else if (isChainTool()) {
@@ -719,14 +700,11 @@ export function setupInput({
         isClick &&
         event.detail === 1 &&
         !clickOnlyDeselects &&
-        !cutSelectOnly &&
         (!pressedBody || isCut())
       ) {
         draft.push(p);
         hover = p;
         setGrabEnabled(false);
-      } else if (isCut() && isClick && isPaused() && pendingSelectToggle && pressedBody) {
-        selection.select(pressedBody);
       }
     } else if (marqueeStart) {
       if (isClick) {
@@ -738,17 +716,12 @@ export function setupInput({
       }
     } else if (spawnStart) {
       if (isCut()) {
-        if (dragged && !cutSelectOnly) {
-          const target = selection.selected;
+        if (dragged) {
           if (isBoxTool()) {
-            trySubtractHole(world, boxCutter(spawnStart, p), target);
+            trySubtractHole(world, boxCutter(spawnStart, p));
           } else if (ghost && ghost.type !== "box" && ghost.type !== "frame" && ghost.type !== "edge") {
-            trySubtractHole(world, primitiveCutter(ghost.type, ghost.x, ghost.y, ghost.size), target);
+            trySubtractHole(world, primitiveCutter(ghost.type, ghost.x, ghost.y, ghost.size));
           }
-        } else if (isClick && isPaused() && pendingSelectToggle && pressedBody) {
-          selection.select(pressedBody);
-        } else if (isClick && clickOnlyDeselects && !pressedBody) {
-          selection.deselect();
         }
       } else if (isBoxTool()) {
         if (isChainOutline()) {
@@ -837,6 +810,7 @@ export function setupInput({
   onAfterRender((ctx) => {
     dropDraftIfToolChanged();
     dropJointAnchorIfToolChanged();
+    if (isCut() && hasSelection()) selection.deselect();
 
     if (marqueeStart && hover && dragged) {
       const box = marqueeRect(marqueeStart, hover);
