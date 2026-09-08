@@ -1,6 +1,6 @@
 import type { Body, Joint } from "planck";
 import { connectedBodies, groupBoundsPx, rotateGroup, scaleGroup, translateGroup } from "./group";
-import { bodyBoundsPx, type AfterRender } from "./physics";
+import { bodyBoundsPx, nearestWrapPoint, withWrapOffsets, type AfterRender } from "./physics";
 import { isPickable } from "./shapes";
 import type { ActiveTool } from "./ui";
 import { vecToMeters, type Point } from "./units";
@@ -47,6 +47,8 @@ export interface SelectionOptions {
   /** Called when the selected motor joint changes (not every frame). */
   onJointSelectionUpdate(joint: Joint | null): void;
   onAfterRender(cb: AfterRender): void;
+  /** World-pixel offsets for wrap copies (identity when wrap is off). */
+  getWrapOffsets(): Point[];
 }
 
 export interface Selection {
@@ -85,6 +87,7 @@ export function createSelection({
   onSelectionUpdate,
   onJointSelectionUpdate,
   onAfterRender,
+  getWrapOffsets,
 }: SelectionOptions): Selection {
   let selected: Body | null = null;
   /** Bodies being edited. Empty when nothing is selected. */
@@ -249,19 +252,27 @@ export function createSelection({
 
   function hitHandle(point: Point): Handle | null {
     if (members.length === 0 || !isPaused()) return null;
+    const offsets = getWrapOffsets();
     for (const handle of handles()) {
-      if (handle.kind === "rotate") {
-        if (Math.hypot(point.x - handle.x, point.y - handle.y) <= ROTATE_HIT_RADIUS / getZoom()) {
+      for (const o of offsets) {
+        const q = { x: point.x - o.x, y: point.y - o.y };
+        if (handle.kind === "rotate") {
+          if (Math.hypot(q.x - handle.x, q.y - handle.y) <= ROTATE_HIT_RADIUS / getZoom()) {
+            return handle;
+          }
+        } else if (
+          Math.abs(q.x - handle.x) <= HANDLE_HIT_RADIUS / getZoom() &&
+          Math.abs(q.y - handle.y) <= HANDLE_HIT_RADIUS / getZoom()
+        ) {
           return handle;
         }
-      } else if (
-        Math.abs(point.x - handle.x) <= HANDLE_HIT_RADIUS / getZoom() &&
-        Math.abs(point.y - handle.y) <= HANDLE_HIT_RADIUS / getZoom()
-      ) {
-        return handle;
       }
     }
     return null;
+  }
+
+  function unwrapToward(point: Point, around: Point): Point {
+    return nearestWrapPoint(point, around, getWrapOffsets());
   }
 
   function canvasPoint(event: MouseEvent): Point {
@@ -289,43 +300,45 @@ export function createSelection({
     if (!selected || members.length === 0 || isCut()) return;
     const r = boxRect();
 
-    ctx.save();
-    ctx.strokeStyle = ACCENT;
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([6, 4]);
-    ctx.strokeRect(r.x, r.y, r.w, r.h);
-
-    if (mode === "group" || mode === "set") {
-      // Faint box per member so the individual shapes stay legible inside the group box.
+    withWrapOffsets(ctx, getWrapOffsets(), () => {
       ctx.save();
-      ctx.globalAlpha = 0.45;
-      ctx.lineWidth = 1;
-      ctx.setLineDash([3, 3]);
-      for (const body of members) {
-        const m = rectOf(bodyBoundsPx(body));
-        ctx.strokeRect(m.x + 3, m.y + 3, m.w - 6, m.h - 6);
+      ctx.strokeStyle = ACCENT;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.strokeRect(r.x, r.y, r.w, r.h);
+
+      if (mode === "group" || mode === "set") {
+        // Faint box per member so the individual shapes stay legible inside the group box.
+        ctx.save();
+        ctx.globalAlpha = 0.45;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        for (const body of members) {
+          const m = rectOf(bodyBoundsPx(body));
+          ctx.strokeRect(m.x + 3, m.y + 3, m.w - 6, m.h - 6);
+        }
+        ctx.restore();
+      }
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = "#ffffff";
+      for (const h of handles()) {
+        if (h.kind === "rotate") {
+          ctx.beginPath();
+          ctx.moveTo(h.x, r.y);
+          ctx.lineTo(h.x, h.y + ROTATE_KNOB_RADIUS);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(h.x, h.y, ROTATE_KNOB_RADIUS, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        } else {
+          ctx.fillRect(h.x - HANDLE_SIZE / 2, h.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+          ctx.strokeRect(h.x - HANDLE_SIZE / 2, h.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+        }
       }
       ctx.restore();
-    }
-    ctx.setLineDash([]);
-
-    ctx.fillStyle = "#ffffff";
-    for (const h of handles()) {
-      if (h.kind === "rotate") {
-        ctx.beginPath();
-        ctx.moveTo(h.x, r.y);
-        ctx.lineTo(h.x, h.y + ROTATE_KNOB_RADIUS);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(h.x, h.y, ROTATE_KNOB_RADIUS, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-      } else {
-        ctx.fillRect(h.x - HANDLE_SIZE / 2, h.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-        ctx.strokeRect(h.x - HANDLE_SIZE / 2, h.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-      }
-    }
-    ctx.restore();
+    });
 
     onSelectionUpdate(selected, members);
   });
@@ -334,7 +347,7 @@ export function createSelection({
 
   function onMove(event: MouseEvent): void {
     if (interaction === "none" || members.length === 0) return;
-    const p = canvasPoint(event);
+    const p = unwrapToward(canvasPoint(event), pivot);
     const pivotM = vecToMeters(pivot);
 
     if (interaction === "scale") {
@@ -379,14 +392,15 @@ export function createSelection({
     (event) => {
       if (event.button !== 0 || members.length === 0) return;
       if (getActiveTool().kind === "zoom" || isSpray() || isCut() || isChainOutline()) return;
-      const p = canvasPoint(event);
-      const handle = hitHandle(p);
+      const raw = canvasPoint(event);
+      const handle = hitHandle(raw);
       if (!handle) return;
 
       event.stopImmediatePropagation();
       event.preventDefault();
 
       pivot = boxCentre();
+      const p = unwrapToward(raw, { x: handle.x, y: handle.y });
       if (handle.kind === "scale") {
         startDist = Math.max(Math.hypot(p.x - pivot.x, p.y - pivot.y), 1);
         const bounds = groupBoundsPx(members);

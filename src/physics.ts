@@ -10,6 +10,7 @@ import {
   type Vec2Value,
   World,
 } from "planck";
+import { connectedBodies, translateGroup } from "./group";
 import { getAngleLimitArc, jointPivotPx, MOTOR_JOINT_HIT_PX } from "./joints";
 import {
   FIXTURE,
@@ -27,7 +28,7 @@ import {
   type BodyUserData,
   type JointUserData,
 } from "./shapes";
-import { GRAVITY_SCALE, toPixels, vecToMeters, vecToPixels, type Point } from "./units";
+import { GRAVITY_SCALE, toMeters, toPixels, vecToMeters, vecToPixels, type Point } from "./units";
 
 const WALL_THICKNESS = 200;
 const WALL_FILL = "#22262e";
@@ -71,6 +72,11 @@ export interface Physics {
   getGravity(): Point;
   setBackground(color: string): void;
   getBackground(): string;
+  /** When on, boundary walls are removed and shapes wrap around the canvas. */
+  setWrapEnabled(on: boolean): void;
+  isWrapEnabled(): boolean;
+  /** World-pixel offsets used to draw / hit-test wrap copies. Identity when wrap is off. */
+  getWrapOffsets(): Point[];
   /** Default bounce for walls and bodies that have not overridden elasticity. */
   setWorldRestitution(value: number): void;
   /** Surface friction for walls and user shapes. */
@@ -119,6 +125,57 @@ export function bodyBoundsPx(body: Body): { min: Point; max: Point } {
   return { min: vecToPixels({ x: minX, y: minY }), max: vecToPixels({ x: maxX, y: maxY }) };
 }
 
+/** Tile offsets for wrap copies: identity, or a 3×3 grid around the canvas. */
+export function wrapOffsets(size: { w: number; h: number }, enabled: boolean): Point[] {
+  if (!enabled) return [{ x: 0, y: 0 }];
+  const out: Point[] = [];
+  for (let j = -1; j <= 1; j++) {
+    for (let i = -1; i <= 1; i++) {
+      out.push({ x: i * size.w, y: j * size.h });
+    }
+  }
+  return out;
+}
+
+/** Draw `fn` once per wrap offset, translating the context for copies. */
+export function withWrapOffsets(
+  ctx: CanvasRenderingContext2D,
+  offsets: Point[],
+  fn: () => void,
+): void {
+  for (const o of offsets) {
+    if (o.x === 0 && o.y === 0) {
+      fn();
+      continue;
+    }
+    ctx.save();
+    ctx.translate(o.x, o.y);
+    fn();
+    ctx.restore();
+  }
+}
+
+/** Map `point` onto the wrap copy nearest `around` (used while dragging across a seam). */
+export function nearestWrapPoint(point: Point, around: Point, offsets: Point[]): Point {
+  let best = point;
+  let bestDist = Infinity;
+  for (const o of offsets) {
+    const q = { x: point.x - o.x, y: point.y - o.y };
+    const d = (q.x - around.x) ** 2 + (q.y - around.y) ** 2;
+    if (d < bestDist) {
+      bestDist = d;
+      best = q;
+    }
+  }
+  return best;
+}
+
+function wrapDelta(value: number, span: number): number {
+  if (!(span > 0) || !Number.isFinite(value)) return 0;
+  const wrapped = ((value % span) + span) % span;
+  return wrapped - value;
+}
+
 export function createPhysics(container: HTMLElement): Physics {
   const world = new World({ gravity: { x: 0, y: 0 } });
   const ground = world.createBody({
@@ -138,6 +195,7 @@ export function createPhysics(container: HTMLElement): Physics {
   let lastDpr = 0;
   let background = DEFAULT_BACKGROUND;
   let paused = false;
+  let wrapEnabled = false;
   let size = { w: 1, h: 1 };
   let zoom = 1;
   let offset = { x: 0, y: 0 };
@@ -168,8 +226,37 @@ export function createPhysics(container: HTMLElement): Physics {
     offset = { x: offset.x + dx, y: offset.y + dy };
   }
 
+  function currentWrapOffsets(): Point[] {
+    return wrapOffsets(size, wrapEnabled);
+  }
+
+  function wrapBodies(): void {
+    if (!wrapEnabled) return;
+    const spanX = toMeters(size.w);
+    const spanY = toMeters(size.h);
+    const seen = new Set<Body>();
+    for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
+      if (!isPickable(body) || seen.has(body)) continue;
+      const group = connectedBodies(body);
+      for (const member of group) seen.add(member);
+      let cx = 0;
+      let cy = 0;
+      for (const member of group) {
+        const p = member.getPosition();
+        cx += p.x;
+        cy += p.y;
+      }
+      const n = group.length;
+      const dx = wrapDelta(cx / n, spanX);
+      const dy = wrapDelta(cy / n, spanY);
+      if (dx !== 0 || dy !== 0) translateGroup(group, { x: dx, y: dy });
+    }
+  }
+
   function buildWalls(w: number, h: number): void {
     for (const wall of walls) world.destroyBody(wall);
+    walls = [];
+    if (wrapEnabled) return;
 
     const half = WALL_THICKNESS / 2;
     const wallData: BodyUserData = { kind: "wall", label: "Wall", fillStyle: WALL_FILL };
@@ -374,15 +461,19 @@ export function createPhysics(container: HTMLElement): Physics {
     ctx.translate(offset.x, offset.y);
     ctx.scale(zoom, zoom);
 
-    for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
-      if (getBodyData(body)?.kind === "wall") drawBody(body);
+    if (!wrapEnabled) {
+      for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
+        if (getBodyData(body)?.kind === "wall") drawBody(body);
+      }
     }
-    for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
-      if (getBodyData(body)?.kind !== "wall") drawBody(body);
-    }
-    for (let joint: Joint | null = world.getJointList(); joint; joint = joint.getNext() as Joint | null) {
-      drawJoint(joint);
-    }
+    withWrapOffsets(ctx, currentWrapOffsets(), () => {
+      for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
+        if (getBodyData(body)?.kind !== "wall") drawBody(body);
+      }
+      for (let joint: Joint | null = world.getJointList(); joint; joint = joint.getNext() as Joint | null) {
+        drawJoint(joint);
+      }
+    });
     for (const cb of afterRender) cb(ctx);
     ctx.restore();
   }
@@ -399,6 +490,7 @@ export function createPhysics(container: HTMLElement): Physics {
         acc -= STEP;
       }
     }
+    wrapBodies();
     paint();
     requestAnimationFrame(tick);
   }
@@ -413,39 +505,43 @@ export function createPhysics(container: HTMLElement): Physics {
   }
 
   function bodyAt(point: Point): Body | null {
-    const p: Vec2Value = vecToMeters(point);
+    const offsets = currentWrapOffsets();
     let edgeHit: Body | null = null;
     let edgeDist = EDGE_HIT_PX / zoom;
     for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
       if (!isPickable(body)) continue;
-      for (let f = body.getFixtureList(); f; f = f.getNext()) {
-        const shape = f.getShape();
-        if (shape.getType() === "edge") {
-          const edge = shape as EdgeShape;
-          const a = body.getWorldPoint(edge.m_vertex1);
-          const b = body.getWorldPoint(edge.m_vertex2);
-          const dist = distToSegmentPx(point, { x: toPixels(a.x), y: toPixels(a.y) }, { x: toPixels(b.x), y: toPixels(b.y) });
-          if (dist <= edgeDist) {
-            edgeHit = body;
-            edgeDist = dist;
-          }
-        } else if (shape.getType() === "chain") {
-          const chain = shape as ChainShape;
-          for (let i = 0; i < chain.m_count - 1; i++) {
-            const a = body.getWorldPoint(chain.m_vertices[i]);
-            const b = body.getWorldPoint(chain.m_vertices[i + 1]);
-            const dist = distToSegmentPx(
-              point,
-              { x: toPixels(a.x), y: toPixels(a.y) },
-              { x: toPixels(b.x), y: toPixels(b.y) },
-            );
+      for (const o of offsets) {
+        const q = { x: point.x - o.x, y: point.y - o.y };
+        const p: Vec2Value = vecToMeters(q);
+        for (let f = body.getFixtureList(); f; f = f.getNext()) {
+          const shape = f.getShape();
+          if (shape.getType() === "edge") {
+            const edge = shape as EdgeShape;
+            const a = body.getWorldPoint(edge.m_vertex1);
+            const b = body.getWorldPoint(edge.m_vertex2);
+            const dist = distToSegmentPx(q, { x: toPixels(a.x), y: toPixels(a.y) }, { x: toPixels(b.x), y: toPixels(b.y) });
             if (dist <= edgeDist) {
               edgeHit = body;
               edgeDist = dist;
             }
+          } else if (shape.getType() === "chain") {
+            const chain = shape as ChainShape;
+            for (let i = 0; i < chain.m_count - 1; i++) {
+              const a = body.getWorldPoint(chain.m_vertices[i]);
+              const b = body.getWorldPoint(chain.m_vertices[i + 1]);
+              const dist = distToSegmentPx(
+                q,
+                { x: toPixels(a.x), y: toPixels(a.y) },
+                { x: toPixels(b.x), y: toPixels(b.y) },
+              );
+              if (dist <= edgeDist) {
+                edgeHit = body;
+                edgeDist = dist;
+              }
+            }
+          } else if (f.testPoint(p)) {
+            return body;
           }
-        } else if (f.testPoint(p)) {
-          return body;
         }
       }
     }
@@ -453,16 +549,19 @@ export function createPhysics(container: HTMLElement): Physics {
   }
 
   function jointAt(point: Point): Joint | null {
+    const offsets = currentWrapOffsets();
     let best: Joint | null = null;
     let bestDist = MOTOR_JOINT_HIT_PX / zoom;
     for (let joint: Joint | null = world.getJointList(); joint; joint = joint.getNext() as Joint | null) {
       if (joint.getType() === MouseJoint.TYPE) continue;
       const pivot = jointPivotPx(joint);
       if (!pivot) continue;
-      const dist = Math.hypot(point.x - pivot.x, point.y - pivot.y);
-      if (dist <= bestDist) {
-        best = joint;
-        bestDist = dist;
+      for (const o of offsets) {
+        const dist = Math.hypot(point.x - o.x - pivot.x, point.y - o.y - pivot.y);
+        if (dist <= bestDist) {
+          best = joint;
+          bestDist = dist;
+        }
       }
     }
     return best;
@@ -530,6 +629,14 @@ export function createPhysics(container: HTMLElement): Physics {
       background = color;
     },
     getBackground: () => background,
+    setWrapEnabled(on: boolean): void {
+      if (wrapEnabled === on) return;
+      wrapEnabled = on;
+      buildWalls(size.w, size.h);
+      if (wrapEnabled) wrapBodies();
+    },
+    isWrapEnabled: () => wrapEnabled,
+    getWrapOffsets: currentWrapOffsets,
     pause(): void {
       if (paused) return;
       paused = true;

@@ -32,6 +32,8 @@ export type ActiveTool =
 export interface UiOptions {
   onGravityChange(x: number, y: number): void;
   onBackgroundChange(color: string): void;
+  /** Called when the wrap-edges checkbox is toggled. */
+  onWrapChange(wrap: boolean): void;
   /** Called with the requested state when the user toggles Pause/Play (button or Space). */
   onPauseToggle(paused: boolean): void;
   /** Called when the motor speed slider moves while a joint is selected. */
@@ -78,6 +80,7 @@ export interface WorldSettings {
   airDrag: number;
   friction: number;
   background: string;
+  wrap: boolean;
 }
 
 export interface Ui {
@@ -142,6 +145,7 @@ function bindActivate(button: HTMLElement, handler: () => void): void {
 export function setupUi({
   onGravityChange,
   onBackgroundChange,
+  onWrapChange,
   onPauseToggle,
   onMotorSpeedChange,
   onMotorRangeChange,
@@ -659,12 +663,18 @@ export function setupUi({
   backgroundColor.addEventListener("input", applyBackground);
   applyBackground();
 
+  const wrapEdges = requireElement<HTMLInputElement>("wrap-edges");
+  const applyWrap = (): void => onWrapChange(wrapEdges.checked);
+  wrapEdges.addEventListener("change", applyWrap);
+  applyWrap();
+
   function applyAllSettings(): void {
     applyGravity();
     applyElasticity();
     applyAirDrag();
     applyFriction();
     applyBackground();
+    applyWrap();
   }
 
   function getSettings(): WorldSettings {
@@ -675,6 +685,7 @@ export function setupUi({
       airDrag: parseFloat(airDrag.value),
       friction: parseFloat(friction.value),
       background: backgroundColor.value,
+      wrap: wrapEdges.checked,
     };
   }
 
@@ -685,6 +696,7 @@ export function setupUi({
     airDrag.value = String(settings.airDrag);
     friction.value = String(settings.friction);
     backgroundColor.value = settings.background;
+    wrapEdges.checked = settings.wrap === true;
     applyAllSettings();
   }
 
@@ -692,6 +704,7 @@ export function setupUi({
     for (const input of [gravityX, gravityY, elasticity, airDrag, friction, backgroundColor]) {
       input.value = input.defaultValue;
     }
+    wrapEdges.checked = wrapEdges.defaultChecked;
     applyAllSettings();
   }
 

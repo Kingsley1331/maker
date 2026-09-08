@@ -342,6 +342,10 @@
           <span class="label">Friction <output id="friction-value">0.30</output></span>
           <input id="friction" type="range" min="0" max="1" step="0.05" value="0.3" />
         </label>
+        <label class="check-row" for="wrap-edges">
+          <span class="label">Wrap edges</span>
+          <input id="wrap-edges" type="checkbox" />
+        </label>
       </div>
 
       <div class="group">
@@ -515,6 +519,11 @@
           <li>
             <strong>Air drag / Friction:</strong> Air drag slows motion through the air; Friction
             affects sliding on contact. Both apply to every shape.
+          </li>
+          <li>
+            <strong>Wrap edges:</strong> shapes that leave one side of the canvas reappear on the
+            opposite side, and the part that hangs off an edge is drawn on the other side. The
+            solid boundary walls turn off while wrap is on.
           </li>
           <li><strong>Space</strong> toggles Pause / Play.</li>
         </ul>

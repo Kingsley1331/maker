@@ -433,6 +433,26 @@ body {
   pointer-events: none;
 }
 
+.check-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.check-row .label {
+  flex: 1;
+}
+
+.check-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #3b6fe0;
+  cursor: pointer;
+}
+
 .color-row {
   display: flex;
   align-items: center;

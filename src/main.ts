@@ -30,6 +30,7 @@ physics.pause();
 const ui = setupUi({
   onGravityChange: (x, y) => physics.setGravity(x, y),
   onBackgroundChange: (color) => physics.setBackground(color),
+  onWrapChange: (wrap) => physics.setWrapEnabled(wrap),
   onPauseToggle: (paused) => {
     if (paused) {
       physics.pause();
@@ -127,6 +128,7 @@ const input = setupInput({
   onAfterRender: (cb) => physics.onAfterRender(cb),
   bodyAt: (point) => physics.bodyAt(point),
   jointAt: (point) => physics.jointAt(point),
+  getWrapOffsets: () => physics.getWrapOffsets(),
 });
 
 ui.setPaused(physics.isPaused());
@@ -231,7 +233,7 @@ async function loadScene(id: string): Promise<void> {
   resetEditor();
   deserializeScene(physics.world, physics.ground, scene);
   const { zoom, pan, ...settings } = scene.settings;
-  ui.setSettings(settings);
+  ui.setSettings({ ...settings, wrap: settings.wrap === true });
   physics.setView(zoom, pan);
   ui.setZoom(zoom);
   setCurrentScene(scene);

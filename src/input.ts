@@ -1,7 +1,7 @@
 import { MouseJoint, type Body, type Joint, type World } from "planck";
 import { boxCutter, primitiveCutter, trySubtractHole } from "./cut";
 import { createPin, createRevolute, createRod, createWeld, createWheel, type JointType } from "./joints";
-import { bodyBoundsPx, type AfterRender } from "./physics";
+import { bodyBoundsPx, nearestWrapPoint, withWrapOffsets, type AfterRender } from "./physics";
 import { createSelection, type Selection } from "./selection";
 import {
   boxBounds,
@@ -23,7 +23,7 @@ import {
   type ShapePreview,
 } from "./shapes";
 import type { ActiveTool, SpraySample } from "./ui";
-import { toPixels, vecToMeters } from "./units";
+import { vecToMeters, vecToPixels } from "./units";
 
 /** Max pointer travel (px) between mousedown and mouseup for it to count as a click. */
 const CLICK_THRESHOLD = 6;
@@ -57,6 +57,8 @@ export interface InputOptions {
   onAfterRender(cb: AfterRender): void;
   bodyAt(point: Point): Body | null;
   jointAt(point: Point): Joint | null;
+  /** World-pixel offsets for wrap copies (identity when wrap is off). */
+  getWrapOffsets(): Point[];
 }
 
 export interface Input {
@@ -90,6 +92,7 @@ export function setupInput({
   onAfterRender,
   bodyAt,
   jointAt,
+  getWrapOffsets,
 }: InputOptions): Input {
   const selection = createSelection({
     canvas,
@@ -104,6 +107,7 @@ export function setupInput({
     onSelectionUpdate,
     onJointSelectionUpdate,
     onAfterRender,
+    getWrapOffsets,
   });
 
   let grabEnabled = true;
@@ -309,9 +313,19 @@ export function setupInput({
     if (grabIdle()) setGrabEnabled(true);
   }
 
+  function unwrapTowardBody(point: Point, body: Body): Point {
+    return nearestWrapPoint(point, vecToPixels(body.getPosition()), getWrapOffsets());
+  }
+
+  function setGrabTarget(point: Point): void {
+    if (!mouseJoint) return;
+    const body = mouseJoint.getBodyB();
+    mouseJoint.setTarget(vecToMeters(body ? unwrapTowardBody(point, body) : point));
+  }
+
   function startGrab(body: Body, point: Point): void {
     endGrab();
-    const target = vecToMeters(point);
+    const target = vecToMeters(unwrapTowardBody(point, body));
     const joint = world.createJoint(
       new MouseJoint(
         {
@@ -424,7 +438,7 @@ export function setupInput({
     dropDraftIfToolChanged();
     dropJointAnchorIfToolChanged();
     hover = canvasPoint(event);
-    if (mouseJoint) mouseJoint.setTarget(vecToMeters(hover));
+    setGrabTarget(hover);
     if (!moveOffset) applyCursor();
   });
 
@@ -526,8 +540,9 @@ export function setupInput({
       } else {
         selection.select(pressedBody);
       }
-      const pos = pressedBody.getPosition();
-      moveOffset = { x: toPixels(pos.x) - p.x, y: toPixels(pos.y) - p.y };
+      const posPx = vecToPixels(pressedBody.getPosition());
+      const local = nearestWrapPoint(p, posPx, getWrapOffsets());
+      moveOffset = { x: posPx.x - local.x, y: posPx.y - local.y };
       applyCursor();
     } else if (grabEnabled && pressedBody.isDynamic()) {
       startGrab(pressedBody, p);
@@ -567,7 +582,7 @@ export function setupInput({
     if (eventOnToolbar(event)) return;
     const p = canvasPoint(event);
     hover = p;
-    if (mouseJoint) mouseJoint.setTarget(vecToMeters(p));
+    setGrabTarget(p);
 
     if (sprayLast) {
       stampSprayAlong(p);
@@ -583,10 +598,12 @@ export function setupInput({
     if (moveOffset && pressedBody) {
       // Velocity is left untouched (freeze-frame edit): the shape resumes its prior motion on Play.
       // Everything selected (the shape, or its whole jointed group) moves by the same delta.
-      const pos = pressedBody.getPosition();
+      const posPx = vecToPixels(pressedBody.getPosition());
+      const around = { x: posPx.x - moveOffset.x, y: posPx.y - moveOffset.y };
+      const local = nearestWrapPoint(p, around, getWrapOffsets());
       const delta = {
-        x: p.x + moveOffset.x - toPixels(pos.x),
-        y: p.y + moveOffset.y - toPixels(pos.y),
+        x: local.x + moveOffset.x - posPx.x,
+        y: local.y + moveOffset.y - posPx.y,
       };
       selection.translate(delta);
       return;
@@ -662,11 +679,19 @@ export function setupInput({
 
   function bodiesInMarquee(a: Point, b: Point): Body[] {
     const box = marqueeRect(a, b);
+    const offsets = getWrapOffsets();
     const hits: Body[] = [];
     for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
       if (!isPickable(body)) continue;
       const { min, max } = bodyBoundsPx(body);
-      if (boundsOverlap(min, max, box)) hits.push(body);
+      for (const o of offsets) {
+        if (
+          boundsOverlap({ x: min.x + o.x, y: min.y + o.y }, { x: max.x + o.x, y: max.y + o.y }, box)
+        ) {
+          hits.push(body);
+          break;
+        }
+      }
     }
     return hits;
   }
@@ -823,22 +848,25 @@ export function setupInput({
     }
 
     if (ghost) {
-      ctx.save();
-      tracePreview(ctx, ghost);
-      const cutting = isCut();
-      const outlining = isChainOutline();
-      if (ghost.type !== "edge" && !outlining) {
-        ctx.globalAlpha = cutting ? 0.28 : 0.45;
-        ctx.fillStyle = ghost.fillStyle;
-        ctx.fill("evenodd");
-        ctx.globalAlpha = 1;
-      }
-      ctx.setLineDash([5, 4]);
-      ctx.lineWidth = 1.5;
-      ctx.strokeStyle = cutting ? CUT_FILL : ACCENT;
-      ctx.lineCap = "round";
-      ctx.stroke();
-      ctx.restore();
+      const preview = ghost;
+      withWrapOffsets(ctx, getWrapOffsets(), () => {
+        ctx.save();
+        tracePreview(ctx, preview);
+        const cutting = isCut();
+        const outlining = isChainOutline();
+        if (preview.type !== "edge" && !outlining) {
+          ctx.globalAlpha = cutting ? 0.28 : 0.45;
+          ctx.fillStyle = preview.fillStyle;
+          ctx.fill("evenodd");
+          ctx.globalAlpha = 1;
+        }
+        ctx.setLineDash([5, 4]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = cutting ? CUT_FILL : ACCENT;
+        ctx.lineCap = "round";
+        ctx.stroke();
+        ctx.restore();
+      });
     }
 
     if (jointAnchor) {

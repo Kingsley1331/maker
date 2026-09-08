@@ -22,6 +22,8 @@ export interface SceneSettings {
   airDrag: number;
   friction: number;
   background: string;
+  /** When omitted (older saves), wrap is off. */
+  wrap?: boolean;
   zoom: number;
   /** View offset in screen pixels. */
   pan: Point;
