@@ -2,7 +2,9 @@ import {
   Box,
   MouseJoint,
   type Body,
+  type ChainShape,
   type CircleShape,
+  type EdgeShape,
   type Joint,
   type PolygonShape,
   type Vec2Value,
@@ -30,6 +32,10 @@ import { GRAVITY_SCALE, toPixels, vecToMeters, vecToPixels, type Point } from ".
 const WALL_THICKNESS = 200;
 const WALL_FILL = "#22262e";
 const JOINT_ACCENT = "#3b6fe0";
+/** Click distance to a drawn edge, in screen pixels. */
+const EDGE_HIT_PX = 8;
+/** Drawn thickness of an edge segment, in world pixels. */
+const EDGE_STROKE_PX = 3;
 const STEP = 1 / 60;
 const VELOCITY_ITERATIONS = 8;
 const POSITION_ITERATIONS = 3;
@@ -90,11 +96,14 @@ export function bodyBoundsPx(body: Body): { min: Point; max: Point } {
   let maxX = -Infinity;
   let maxY = -Infinity;
   for (let f = body.getFixtureList(); f; f = f.getNext()) {
-    const aabb = f.getAABB(0);
-    minX = Math.min(minX, aabb.lowerBound.x);
-    minY = Math.min(minY, aabb.lowerBound.y);
-    maxX = Math.max(maxX, aabb.upperBound.x);
-    maxY = Math.max(maxY, aabb.upperBound.y);
+    const children = f.getShape().getChildCount();
+    for (let i = 0; i < children; i++) {
+      const aabb = f.getAABB(i);
+      minX = Math.min(minX, aabb.lowerBound.x);
+      minY = Math.min(minY, aabb.lowerBound.y);
+      maxX = Math.max(maxX, aabb.upperBound.x);
+      maxY = Math.max(maxY, aabb.upperBound.y);
+    }
   }
   if (!Number.isFinite(minX)) {
     const p = vecToPixels(body.getPosition());
@@ -253,6 +262,37 @@ export function createPhysics(container: HTMLElement): Physics {
         ctx.closePath();
         ctx.fill();
         if (strokeShape) ctx.stroke();
+      } else if (shape.getType() === "edge") {
+        const edge = shape as EdgeShape;
+        const p1 = body.getWorldPoint(edge.m_vertex1);
+        const p2 = body.getWorldPoint(edge.m_vertex2);
+        ctx.beginPath();
+        ctx.moveTo(toPixels(p1.x), toPixels(p1.y));
+        ctx.lineTo(toPixels(p2.x), toPixels(p2.y));
+        ctx.save();
+        ctx.strokeStyle = data.fillStyle;
+        ctx.lineWidth = EDGE_STROKE_PX;
+        ctx.lineCap = "round";
+        ctx.stroke();
+        ctx.restore();
+      } else if (shape.getType() === "chain") {
+        const chain = shape as ChainShape;
+        if (chain.m_count < 2) continue;
+        ctx.beginPath();
+        for (let i = 0; i < chain.m_count; i++) {
+          const p = body.getWorldPoint(chain.m_vertices[i]);
+          const x = toPixels(p.x);
+          const y = toPixels(p.y);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.save();
+        ctx.strokeStyle = data.fillStyle;
+        ctx.lineWidth = EDGE_STROKE_PX;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.stroke();
+        ctx.restore();
       }
     }
   }
@@ -353,15 +393,53 @@ export function createPhysics(container: HTMLElement): Physics {
     requestAnimationFrame(tick);
   }
 
+  function distToSegmentPx(p: Point, a: Point, b: Point): number {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 < 1e-12) return Math.hypot(p.x - a.x, p.y - a.y);
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+    return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+  }
+
   function bodyAt(point: Point): Body | null {
     const p: Vec2Value = vecToMeters(point);
+    let edgeHit: Body | null = null;
+    let edgeDist = EDGE_HIT_PX / zoom;
     for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
       if (!isPickable(body)) continue;
       for (let f = body.getFixtureList(); f; f = f.getNext()) {
-        if (f.testPoint(p)) return body;
+        const shape = f.getShape();
+        if (shape.getType() === "edge") {
+          const edge = shape as EdgeShape;
+          const a = body.getWorldPoint(edge.m_vertex1);
+          const b = body.getWorldPoint(edge.m_vertex2);
+          const dist = distToSegmentPx(point, { x: toPixels(a.x), y: toPixels(a.y) }, { x: toPixels(b.x), y: toPixels(b.y) });
+          if (dist <= edgeDist) {
+            edgeHit = body;
+            edgeDist = dist;
+          }
+        } else if (shape.getType() === "chain") {
+          const chain = shape as ChainShape;
+          for (let i = 0; i < chain.m_count - 1; i++) {
+            const a = body.getWorldPoint(chain.m_vertices[i]);
+            const b = body.getWorldPoint(chain.m_vertices[i + 1]);
+            const dist = distToSegmentPx(
+              point,
+              { x: toPixels(a.x), y: toPixels(a.y) },
+              { x: toPixels(b.x), y: toPixels(b.y) },
+            );
+            if (dist <= edgeDist) {
+              edgeHit = body;
+              edgeDist = dist;
+            }
+          }
+        } else if (f.testPoint(p)) {
+          return body;
+        }
       }
     }
-    return null;
+    return edgeHit;
   }
 
   function jointAt(point: Point): Joint | null {

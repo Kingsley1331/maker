@@ -72,6 +72,23 @@
               <polygon points="4,16 6,6 13,3 20,9 17,20" fill="currentColor" />
             </svg>
           </button>
+          <button class="shape-btn" data-shape="edge" title="Edge (drag a line)" aria-label="Edge">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <line x1="5" y1="19" x2="19" y2="5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
+            </svg>
+          </button>
+          <button class="shape-btn" data-shape="chain" title="Chain (click points)" aria-label="Chain">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <polyline
+                points="4,18 9,8 15,16 20,6"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
         </div>
         <div class="view">
           <button
@@ -348,8 +365,16 @@
             rectangle of four walls. Set wall thickness in the Walls panel.
           </li>
           <li>
+            <strong>Edge tool:</strong> press empty space and drag to draw a static line that other
+            shapes collide with. Click to place a short horizontal edge.
+          </li>
+          <li>
             <strong>Polygon tool:</strong> click to add points and double-click to finish (at least 3
             points).
+          </li>
+          <li>
+            <strong>Chain tool:</strong> click to add points and double-click to finish (at least 2
+            points). The result is a static connected line that other shapes collide with.
           </li>
           <li><strong>Throw:</strong> while playing, drag a shape and release to throw it.</li>
           <li>

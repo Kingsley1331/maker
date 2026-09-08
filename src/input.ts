@@ -6,9 +6,12 @@ import {
   boxBounds,
   createBody,
   createBox,
+  createChain,
+  createEdge,
   createFrame,
   createPolygon,
   DEFAULT_SIZE,
+  edgeEndpoints,
   frameBounds,
   randomColor,
   setBodyMass,
@@ -115,9 +118,9 @@ export function setupInput({
   let moveOffset: Point | null = null;
   /** Pressed a body already in the selection; toggle group/solo on click-up, not press. */
   let pendingSelectToggle = false;
-  /** Vertices of an in-progress polygon (polygon tool). */
+  /** Vertices of an in-progress polygon or chain. */
   let draft: Point[] = [];
-  /** Cursor position for rubber-band previews (polygon draft or pending joint). */
+  /** Cursor position for rubber-band previews (polygon/chain draft or pending joint). */
   let hover: Point | null = null;
   /** First attachment of a two-click joint (revolute / rod / weld / wheel). */
   let jointAnchor: { body: Body; point: Point } | null = null;
@@ -158,6 +161,15 @@ export function setupInput({
     return tool.kind === "shape" && tool.shape === "polygon";
   }
 
+  function isChainTool(): boolean {
+    const tool = getActiveTool();
+    return tool.kind === "shape" && tool.shape === "chain";
+  }
+
+  function isDraftTool(): boolean {
+    return isPolygonTool() || isChainTool();
+  }
+
   function isBoxTool(): boolean {
     const tool = getActiveTool();
     return tool.kind === "shape" && tool.shape === "box";
@@ -168,6 +180,11 @@ export function setupInput({
     return tool.kind === "shape" && tool.shape === "frame";
   }
 
+  function isEdgeTool(): boolean {
+    const tool = getActiveTool();
+    return tool.kind === "shape" && tool.shape === "edge";
+  }
+
   function isCornerDragTool(): boolean {
     return isBoxTool() || isFrameTool();
   }
@@ -175,7 +192,14 @@ export function setupInput({
   function sprayShape(): PrimitiveShape | null {
     if (!isSpray()) return null;
     const tool = getActiveTool();
-    if (tool.kind !== "shape" || tool.shape === "polygon" || tool.shape === "box" || tool.shape === "frame") {
+    if (
+      tool.kind !== "shape" ||
+      tool.shape === "polygon" ||
+      tool.shape === "box" ||
+      tool.shape === "frame" ||
+      tool.shape === "edge" ||
+      tool.shape === "chain"
+    ) {
       return null;
     }
     return tool.shape;
@@ -232,7 +256,7 @@ export function setupInput({
   function applyCursor(): void {
     if (panning || moveOffset) canvas.style.cursor = "grabbing";
     else if (isZoomTool()) canvas.style.cursor = "grab";
-    else if (isSpray() || isPolygonTool() || isCornerDragTool() || (jointType() && isPaused())) {
+    else if (isSpray() || isDraftTool() || isCornerDragTool() || isEdgeTool() || (jointType() && isPaused())) {
       canvas.style.cursor = "crosshair";
     } else canvas.style.cursor = "";
   }
@@ -293,7 +317,14 @@ export function setupInput({
   function rebuildGhost(size: number): void {
     if (!spawnStart) return;
     const tool = getActiveTool();
-    if (tool.kind !== "shape" || tool.shape === "polygon" || tool.shape === "box" || tool.shape === "frame") {
+    if (
+      tool.kind !== "shape" ||
+      tool.shape === "polygon" ||
+      tool.shape === "box" ||
+      tool.shape === "frame" ||
+      tool.shape === "edge" ||
+      tool.shape === "chain"
+    ) {
       return;
     }
     ghostColor ??= randomColor();
@@ -335,7 +366,7 @@ export function setupInput({
   }
 
   function dropDraftIfToolChanged(): void {
-    if (!isPolygonTool() && draft.length > 0) clearDraft();
+    if (!isDraftTool() && draft.length > 0) clearDraft();
   }
 
   function dropJointAnchorIfToolChanged(): void {
@@ -405,8 +436,8 @@ export function setupInput({
 
     // Pause-click a pin / revolute / wheel pivot to select it for the motor sliders. This wins
     // over joint placement (so you can click a pin you just made) unless a two-click joint is
-    // waiting for its second body, or a polygon is mid-draw.
-    if (isPaused() && jointAnchor === null && !(isPolygonTool() && draft.length > 0)) {
+    // waiting for its second body, or a polygon/chain is mid-draw.
+    if (isPaused() && jointAnchor === null && !(isDraftTool() && draft.length > 0)) {
       const hitJoint = jointAt(p);
       if (hitJoint) {
         selection.selectJoint(hitJoint);
@@ -440,7 +471,7 @@ export function setupInput({
       return;
     }
 
-    if (isPolygonTool() && draft.length > 0) {
+    if (isDraftTool() && draft.length > 0) {
       // Mid-draw: clicks add vertices even over existing bodies.
       pressedBody = null;
       setGrabEnabled(false);
@@ -456,7 +487,7 @@ export function setupInput({
       // drag still sizes and spawns a new shape (primitives only).
       clickOnlyDeselects = hasSelection();
       selection.deselect();
-      if (!isPolygonTool()) spawnStart = p;
+      if (!isDraftTool()) spawnStart = p;
       setGrabEnabled(false);
     } else if (isPaused()) {
       // Paused: select a new body on press so a drag can move it. If this body is already in the
@@ -480,7 +511,7 @@ export function setupInput({
 
   canvas.addEventListener("dblclick", (event) => {
     event.preventDefault();
-    if (!isPolygonTool()) return;
+    if (!isDraftTool()) return;
 
     if (draft.length >= 2) {
       const last = draft[draft.length - 1];
@@ -490,9 +521,13 @@ export function setupInput({
       }
     }
 
-    if (draft.length < 3) return;
-
-    createPolygon(world, draft);
+    if (isPolygonTool()) {
+      if (draft.length < 3) return;
+      createPolygon(world, draft);
+    } else if (isChainTool()) {
+      if (draft.length < 2) return;
+      createChain(world, draft);
+    }
     clearDraft();
     applyCursor();
   });
@@ -520,11 +555,25 @@ export function setupInput({
       return;
     }
 
-    if (!spawnStart || isPolygonTool() || !isShapeTool()) return;
+    if (!spawnStart || isDraftTool() || !isShapeTool()) return;
     const dist = Math.hypot(p.x - spawnStart.x, p.y - spawnStart.y);
     if (!dragged && dist <= clickSlop()) return;
 
     dragged = true;
+    if (isEdgeTool()) {
+      ghostColor ??= randomColor();
+      const ends = edgeEndpoints(spawnStart, p);
+      ghost = {
+        type: "edge",
+        x: ends.a.x,
+        y: ends.a.y,
+        x2: ends.b.x,
+        y2: ends.b.y,
+        size: 0,
+        fillStyle: ghostColor,
+      };
+      return;
+    }
     if (isCornerDragTool()) {
       ghostColor ??= randomColor();
       if (isFrameTool()) {
@@ -576,7 +625,7 @@ export function setupInput({
           placeJoint(type, pressedBody, pressPoint);
         }
       }
-    } else if (isPolygonTool()) {
+    } else if (isDraftTool()) {
       if (isClick && event.detail === 1 && !clickOnlyDeselects && !pressedBody) {
         draft.push(p);
         hover = p;
@@ -606,11 +655,28 @@ export function setupInput({
             thickness,
           );
         }
-      } else if (dragged && ghost && ghost.type !== "box" && ghost.type !== "frame") {
+      } else if (isEdgeTool()) {
+        if (dragged) {
+          createEdge(world, spawnStart, p, ghostColor ?? randomColor());
+        } else if (isClick && !clickOnlyDeselects) {
+          createEdge(
+            world,
+            { x: spawnStart.x - DEFAULT_SIZE, y: spawnStart.y },
+            { x: spawnStart.x + DEFAULT_SIZE, y: spawnStart.y },
+          );
+        }
+      } else if (dragged && ghost && ghost.type !== "box" && ghost.type !== "frame" && ghost.type !== "edge") {
         createBody(world, ghost.type, ghost.x, ghost.y, ghost.size, ghost.fillStyle);
       } else if (isClick && !clickOnlyDeselects) {
         const tool = getActiveTool();
-        if (tool.kind === "shape" && tool.shape !== "polygon" && tool.shape !== "box" && tool.shape !== "frame") {
+        if (
+          tool.kind === "shape" &&
+          tool.shape !== "polygon" &&
+          tool.shape !== "box" &&
+          tool.shape !== "frame" &&
+          tool.shape !== "edge" &&
+          tool.shape !== "chain"
+        ) {
           createBody(world, tool.shape, spawnStart.x, spawnStart.y, DEFAULT_SIZE);
         }
       }
@@ -635,13 +701,16 @@ export function setupInput({
     if (ghost) {
       ctx.save();
       tracePreview(ctx, ghost);
-      ctx.globalAlpha = 0.45;
-      ctx.fillStyle = ghost.fillStyle;
-      ctx.fill("evenodd");
-      ctx.globalAlpha = 1;
+      if (ghost.type !== "edge") {
+        ctx.globalAlpha = 0.45;
+        ctx.fillStyle = ghost.fillStyle;
+        ctx.fill("evenodd");
+        ctx.globalAlpha = 1;
+      }
       ctx.setLineDash([5, 4]);
       ctx.lineWidth = 1.5;
       ctx.strokeStyle = ACCENT;
+      ctx.lineCap = "round";
       ctx.stroke();
       ctx.restore();
     }
@@ -669,7 +738,7 @@ export function setupInput({
 
     const preview = hover ? [...draft, hover] : draft;
     ctx.save();
-    if (preview.length >= 3) {
+    if (isPolygonTool() && preview.length >= 3) {
       ctx.beginPath();
       ctx.moveTo(preview[0].x, preview[0].y);
       for (let i = 1; i < preview.length; i++) ctx.lineTo(preview[i].x, preview[i].y);

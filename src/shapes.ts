@@ -1,4 +1,4 @@
-import { Box, Circle, Polygon, Settings, type Body, type World } from "planck";
+import { Box, Chain, Circle, Edge, Polygon, Settings, type Body, type World } from "planck";
 import decomp from "poly-decomp";
 import {
   DENSITY,
@@ -15,7 +15,7 @@ Settings.maxPolygonVertices = 16;
 Settings.velocityThreshold = 0;
 
 export type PrimitiveShape = "circle" | "rectangle" | "triangle" | "pentagon" | "hexagon";
-export type ShapeType = PrimitiveShape | "polygon" | "box" | "frame";
+export type ShapeType = PrimitiveShape | "polygon" | "box" | "frame" | "edge" | "chain";
 
 export const PRIMITIVE_SHAPES: PrimitiveShape[] = [
   "circle",
@@ -25,7 +25,7 @@ export const PRIMITIVE_SHAPES: PrimitiveShape[] = [
   "hexagon",
 ];
 
-export const SHAPE_TYPES: ShapeType[] = [...PRIMITIVE_SHAPES, "box", "frame", "polygon"];
+export const SHAPE_TYPES: ShapeType[] = [...PRIMITIVE_SHAPES, "box", "frame", "edge", "chain", "polygon"];
 
 export function isPrimitiveShape(value: ShapeType): value is PrimitiveShape {
   return (PRIMITIVE_SHAPES as readonly ShapeType[]).includes(value);
@@ -60,17 +60,20 @@ export interface BodyUserData {
 }
 
 export interface ShapePreview {
-  type: PrimitiveShape | "box" | "frame";
+  type: PrimitiveShape | "box" | "frame" | "edge";
   x: number;
   y: number;
   fillStyle: string;
-  /** Nominal radius in px; unused when `type` is `"box"` or `"frame"`. */
+  /** Nominal radius in px; unused when `type` is `"box"`, `"frame"`, or `"edge"`. */
   size: number;
   /** Top-left width/height in px when `type` is `"box"` or `"frame"`. */
   w?: number;
   h?: number;
   /** Wall thickness in px when `type` is `"frame"`. */
   thickness?: number;
+  /** Segment end in px when `type` is `"edge"` (`x`/`y` are the start). */
+  x2?: number;
+  y2?: number;
 }
 
 export interface JointUserData {
@@ -293,6 +296,8 @@ export function createBody(
 
 /** Smallest side length a dragged box can have (px). Matches the radial-spawn minimum. */
 const MIN_BOX = 8;
+/** Smallest length a dragged edge can have (px). Matches the radial-spawn minimum. */
+const MIN_EDGE = 8;
 
 function aabbFromCorners(
   a: Point,
@@ -317,6 +322,25 @@ function aabbFromCorners(
 /** Axis-aligned pixel bounds from two corners, each side at least `MIN_BOX`. */
 export function boxBounds(a: Point, b: Point): { x: number; y: number; w: number; h: number } {
   return aabbFromCorners(a, b, MIN_BOX);
+}
+
+/** Segment endpoints in px, stretched to at least `MIN_EDGE` about the midpoint. */
+export function edgeEndpoints(a: Point, b: Point): { a: Point; b: Point } {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (len >= MIN_EDGE) return { a, b };
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  if (len < 1e-6) {
+    const half = MIN_EDGE / 2;
+    return { a: { x: mx - half, y: my }, b: { x: mx + half, y: my } };
+  }
+  const half = MIN_EDGE / (2 * len);
+  return {
+    a: { x: mx - dx * half, y: my - dy * half },
+    b: { x: mx + dx * half, y: my + dy * half },
+  };
 }
 
 /** Clamp wall thickness so a frame of size `w`×`h` keeps an inner opening. */
@@ -415,6 +439,92 @@ export function createFrame(
 }
 
 /**
+ * Static line segment whose ends are `a` and `b` (pixels). Length is clamped to at least 8 px.
+ * The body is centred on the segment midpoint.
+ */
+export function createEdge(
+  world: World,
+  a: Point,
+  b: Point,
+  fillStyle: string = randomColor(),
+): Body {
+  const ends = edgeEndpoints(a, b);
+  const mx = (ends.a.x + ends.b.x) / 2;
+  const my = (ends.a.y + ends.b.y) / 2;
+  const body = world.createBody({
+    type: "static",
+    position: vecToMeters({ x: mx, y: my }),
+    ...dampingProps(),
+    userData: {
+      kind: "shape",
+      label: "Edge Body",
+      fillStyle,
+    } satisfies BodyUserData,
+  });
+  body.createFixture({
+    shape: new Edge(
+      vecToMeters({ x: ends.a.x - mx, y: ends.a.y - my }),
+      vecToMeters({ x: ends.b.x - mx, y: ends.b.y - my }),
+    ),
+    ...FIXTURE,
+    density: 0,
+  });
+  return body;
+}
+
+function chainVertices(points: Point[]): Point[] {
+  if (points.length === 0) return [];
+  const out: Point[] = [points[0]];
+  for (let i = 1; i < points.length; i++) {
+    const p = points[i];
+    const prev = out[out.length - 1];
+    if (Math.hypot(p.x - prev.x, p.y - prev.y) >= MIN_EDGE) out.push(p);
+  }
+  return out;
+}
+
+function averagePoint(points: Point[]): Point {
+  let x = 0;
+  let y = 0;
+  for (const p of points) {
+    x += p.x;
+    y += p.y;
+  }
+  const n = points.length;
+  return { x: x / n, y: y / n };
+}
+
+/**
+ * Static open polyline of connected edge segments. Consecutive vertices closer than 8 px are
+ * dropped. Returns null if fewer than two vertices remain. The body is centred on the vertex average.
+ */
+export function createChain(world: World, points: Point[]): Body | null {
+  const verts = chainVertices(points);
+  if (verts.length < 2) return null;
+
+  const metres = verts.map(vecToMeters);
+  const centre = averagePoint(metres);
+  const local = metres.map((p) => ({ x: p.x - centre.x, y: p.y - centre.y }));
+
+  const body = world.createBody({
+    type: "static",
+    position: centre,
+    ...dampingProps(),
+    userData: {
+      kind: "shape",
+      label: "Chain Body",
+      fillStyle: randomColor(),
+    } satisfies BodyUserData,
+  });
+  body.createFixture({
+    shape: new Chain(local),
+    ...FIXTURE,
+    density: 0,
+  });
+  return body;
+}
+
+/**
  * Create a rigid body from user-drawn vertices (pixels). Returns null if a body cannot be formed
  * (degenerate or empty decomposition). The body is placed on the drawn centroid.
  */
@@ -489,6 +599,11 @@ export function tracePreview(ctx: CanvasRenderingContext2D, preview: ShapePrevie
     if (innerW > 0 && innerH > 0) ctx.rect(x + t, y + t, innerW, innerH);
     return;
   }
+  if (type === "edge") {
+    ctx.moveTo(x, y);
+    ctx.lineTo(preview.x2 ?? x, preview.y2 ?? y);
+    return;
+  }
   const size = preview.size;
   if (type === "circle") {
     ctx.arc(x, y, size, 0, Math.PI * 2);
@@ -509,7 +624,7 @@ export function tracePreview(ctx: CanvasRenderingContext2D, preview: ShapePrevie
 type FixtureLike = NonNullable<ReturnType<Body["getFixtureList"]>>;
 
 type FixtureSpec = {
-  shape: Circle | Polygon;
+  shape: Circle | Polygon | Edge | Chain;
   density: number;
   friction: number;
   restitution: number;
@@ -534,6 +649,27 @@ function fixtureSpecs(body: Body, factor: number): FixtureSpec[] {
       const verts = poly.m_vertices.slice(0, poly.m_count).map((v) => ({ x: v.x * factor, y: v.y * factor }));
       specs.push({
         shape: new Polygon(verts),
+        density: f.getDensity(),
+        friction: f.getFriction(),
+        restitution: f.getRestitution(),
+      });
+    } else if (type === "edge") {
+      const edge = shape as import("planck").EdgeShape;
+      specs.push({
+        shape: new Edge(
+          { x: edge.m_vertex1.x * factor, y: edge.m_vertex1.y * factor },
+          { x: edge.m_vertex2.x * factor, y: edge.m_vertex2.y * factor },
+        ),
+        density: f.getDensity(),
+        friction: f.getFriction(),
+        restitution: f.getRestitution(),
+      });
+    } else if (type === "chain") {
+      const chain = shape as import("planck").ChainShape;
+      const raw = chain.m_isLoop ? chain.m_vertices.slice(0, chain.m_count - 1) : chain.m_vertices.slice(0, chain.m_count);
+      const verts = raw.map((v) => ({ x: v.x * factor, y: v.y * factor }));
+      specs.push({
+        shape: new Chain(verts, chain.m_isLoop),
         density: f.getDensity(),
         friction: f.getFriction(),
         restitution: f.getRestitution(),
