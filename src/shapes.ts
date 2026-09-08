@@ -497,12 +497,13 @@ function averagePoint(points: Point[]): Point {
 }
 
 /**
- * Static open polyline of connected edge segments. Consecutive vertices closer than 8 px are
- * dropped. Returns null if fewer than two vertices remain. The body is centred on the vertex average.
+ * Static polyline of connected edge segments. Consecutive vertices closer than 8 px are
+ * dropped. Returns null if fewer than two vertices remain (three when `loop` is true). The body
+ * is centred on the vertex average. When `loop` is true the last vertex joins the first.
  */
-export function createChain(world: World, points: Point[]): Body | null {
+export function createChain(world: World, points: Point[], loop = false): Body | null {
   const verts = chainVertices(points);
-  if (verts.length < 2) return null;
+  if (verts.length < (loop ? 3 : 2)) return null;
 
   const metres = verts.map(vecToMeters);
   const centre = averagePoint(metres);
@@ -519,7 +520,7 @@ export function createChain(world: World, points: Point[]): Body | null {
     } satisfies BodyUserData,
   });
   body.createFixture({
-    shape: new Chain(local),
+    shape: new Chain(local, loop),
     ...FIXTURE,
     density: 0,
   });

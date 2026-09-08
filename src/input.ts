@@ -46,6 +46,7 @@ export interface InputOptions {
   getActiveTool(): ActiveTool;
   isSpray(): boolean;
   isCut(): boolean;
+  isChainOutline(): boolean;
   getSpraySample(): SpraySample;
   getSpraySize(): number;
   getWallThickness(): number;
@@ -78,6 +79,7 @@ export function setupInput({
   getActiveTool,
   isSpray,
   isCut,
+  isChainOutline,
   getSpraySample,
   getSpraySize,
   getWallThickness,
@@ -95,6 +97,7 @@ export function setupInput({
     getActiveTool,
     isSpray,
     isCut,
+    isChainOutline,
     screenToWorld,
     isPaused,
     onSelectionUpdate,
@@ -266,6 +269,7 @@ export function setupInput({
     else if (
       isSpray() ||
       isCut() ||
+      isChainOutline() ||
       isDraftTool() ||
       isCornerDragTool() ||
       isEdgeTool() ||
@@ -559,6 +563,7 @@ export function setupInput({
     if (isPolygonTool()) {
       if (draft.length < 3) return;
       if (isCut()) trySubtractHole(world, draft, selection.selected);
+      else if (isChainOutline()) createChain(world, draft, true);
       else createPolygon(world, draft);
     } else if (isChainTool()) {
       if (draft.length < 2) return;
@@ -699,7 +704,20 @@ export function setupInput({
           selection.deselect();
         }
       } else if (isBoxTool()) {
-        if (dragged) {
+        if (isChainOutline()) {
+          if (dragged) {
+            createChain(world, boxCutter(spawnStart, p), true);
+          } else if (isClick && !clickOnlyDeselects) {
+            createChain(
+              world,
+              boxCutter(
+                { x: spawnStart.x - DEFAULT_SIZE, y: spawnStart.y - DEFAULT_SIZE },
+                { x: spawnStart.x + DEFAULT_SIZE, y: spawnStart.y + DEFAULT_SIZE },
+              ),
+              true,
+            );
+          }
+        } else if (dragged) {
           createBox(world, spawnStart, p, ghostColor ?? randomColor());
         } else if (isClick && !clickOnlyDeselects) {
           createBox(
@@ -732,7 +750,11 @@ export function setupInput({
           );
         }
       } else if (dragged && ghost && ghost.type !== "box" && ghost.type !== "frame" && ghost.type !== "edge") {
-        createBody(world, ghost.type, ghost.x, ghost.y, ghost.size, ghost.fillStyle);
+        if (isChainOutline()) {
+          createChain(world, primitiveCutter(ghost.type, ghost.x, ghost.y, ghost.size), true);
+        } else {
+          createBody(world, ghost.type, ghost.x, ghost.y, ghost.size, ghost.fillStyle);
+        }
       } else if (isClick && !clickOnlyDeselects) {
         const tool = getActiveTool();
         if (
@@ -743,7 +765,11 @@ export function setupInput({
           tool.shape !== "edge" &&
           tool.shape !== "chain"
         ) {
-          createBody(world, tool.shape, spawnStart.x, spawnStart.y, DEFAULT_SIZE);
+          if (isChainOutline()) {
+            createChain(world, primitiveCutter(tool.shape, spawnStart.x, spawnStart.y, DEFAULT_SIZE), true);
+          } else {
+            createBody(world, tool.shape, spawnStart.x, spawnStart.y, DEFAULT_SIZE);
+          }
         }
       }
     } else if (isPaused() && isClick && pendingSelectToggle && pressedBody) {
@@ -769,7 +795,8 @@ export function setupInput({
       ctx.save();
       tracePreview(ctx, ghost);
       const cutting = isCut();
-      if (ghost.type !== "edge") {
+      const outlining = isChainOutline();
+      if (ghost.type !== "edge" && !outlining) {
         ctx.globalAlpha = cutting ? 0.28 : 0.45;
         ctx.fillStyle = ghost.fillStyle;
         ctx.fill("evenodd");
@@ -806,8 +833,9 @@ export function setupInput({
 
     const preview = hover ? [...draft, hover] : draft;
     const cutting = isCut() && isPolygonTool();
+    const outlining = isChainOutline() && isPolygonTool();
     ctx.save();
-    if (isPolygonTool() && preview.length >= 3) {
+    if (isPolygonTool() && preview.length >= 3 && !outlining) {
       ctx.beginPath();
       ctx.moveTo(preview[0].x, preview[0].y);
       for (let i = 1; i < preview.length; i++) ctx.lineTo(preview[i].x, preview[i].y);
@@ -821,6 +849,7 @@ export function setupInput({
     ctx.beginPath();
     ctx.moveTo(preview[0].x, preview[0].y);
     for (let i = 1; i < preview.length; i++) ctx.lineTo(preview[i].x, preview[i].y);
+    if (outlining && preview.length >= 3) ctx.closePath();
     ctx.strokeStyle = cutting ? CUT_FILL : ACCENT;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([5, 4]);

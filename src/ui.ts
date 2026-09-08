@@ -92,6 +92,8 @@ export interface Ui {
   isSpray(): boolean;
   /** True when Cut is on and a filled spawn shape is the active tool. */
   isCut(): boolean;
+  /** True when Chain outline is on and a filled spawn shape is the active tool. */
+  isChainOutline(): boolean;
   /** One stamp's properties (defaults, or a random roll inside each Rand range). */
   getSpraySample(): SpraySample;
   /** Size default used for spray spacing (not a random roll). */
@@ -160,6 +162,7 @@ export function setupUi({
   let activeTool: ActiveTool = { kind: "shape", shape: selectedShape };
   let spray = false;
   let cut = false;
+  let chain = false;
 
   // Pause / Play
   let paused = false;
@@ -262,6 +265,7 @@ export function setupUi({
   const zoomTool = requireElement<HTMLButtonElement>("zoom-tool");
   const sprayToggle = requireElement<HTMLButtonElement>("spray-toggle");
   const cutToggle = requireElement<HTMLButtonElement>("cut-toggle");
+  const chainToggle = requireElement<HTMLButtonElement>("chain-toggle");
   const shapeButtons = Array.from(
     document.querySelectorAll<HTMLButtonElement>(".shape-btn[data-shape]"),
   );
@@ -280,12 +284,20 @@ export function setupUi({
     );
   }
 
+  function chainAllowed(tool: ActiveTool): boolean {
+    return cutAllowed(tool);
+  }
+
   function isSpray(): boolean {
     return spray && sprayAllowed(activeTool);
   }
 
   function isCut(): boolean {
     return cut && cutAllowed(activeTool);
+  }
+
+  function isChainOutline(): boolean {
+    return chain && chainAllowed(activeTool);
   }
 
   const sprayInfo = requireElement<HTMLDivElement>("spray-info");
@@ -318,6 +330,15 @@ export function setupUi({
     cutToggle.setAttribute("aria-pressed", String(on));
   }
 
+  function syncChain(): void {
+    const allowed = chainAllowed(activeTool);
+    if (!allowed) chain = false;
+    const on = isChainOutline();
+    chainToggle.disabled = !allowed;
+    chainToggle.classList.toggle("is-active", on);
+    chainToggle.setAttribute("aria-pressed", String(on));
+  }
+
   bindActivate(sprayOptionsToggle, () => {
     sprayOptionsOpen = !sprayOptionsOpen;
     syncSprayOptions();
@@ -326,9 +347,11 @@ export function setupUi({
   function setActiveTool(tool: ActiveTool): void {
     activeTool = tool;
     if (!sprayAllowed(tool)) spray = false;
+    if (!chainAllowed(tool)) chain = false;
     syncToolButtons();
     syncSpray();
     syncCut();
+    syncChain();
     syncFrameInfo();
     onToolChange(tool);
   }
@@ -357,17 +380,37 @@ export function setupUi({
   bindActivate(sprayToggle, () => {
     if (!sprayAllowed(activeTool)) return;
     spray = !spray;
-    if (spray) cut = false;
+    if (spray) {
+      cut = false;
+      chain = false;
+    }
     syncSpray();
     syncCut();
+    syncChain();
   });
 
   bindActivate(cutToggle, () => {
     if (!cutAllowed(activeTool)) return;
     cut = !cut;
-    if (cut) spray = false;
+    if (cut) {
+      spray = false;
+      chain = false;
+    }
     syncSpray();
     syncCut();
+    syncChain();
+  });
+
+  bindActivate(chainToggle, () => {
+    if (!chainAllowed(activeTool)) return;
+    chain = !chain;
+    if (chain) {
+      spray = false;
+      cut = false;
+    }
+    syncSpray();
+    syncCut();
+    syncChain();
   });
 
   for (const button of shapeButtons) {
@@ -388,6 +431,7 @@ export function setupUi({
   }
   syncSpray();
   syncCut();
+  syncChain();
 
   function parseFinite(input: HTMLInputElement, fallback: number): number {
     const n = Number(input.value);
@@ -820,6 +864,7 @@ export function setupUi({
     getActiveTool: () => activeTool,
     isSpray,
     isCut,
+    isChainOutline,
     getSpraySample,
     getSpraySize,
     getWallThickness,

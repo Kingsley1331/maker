@@ -34,6 +34,7 @@ export interface SelectionOptions {
   getActiveTool(): ActiveTool;
   isSpray(): boolean;
   isCut(): boolean;
+  isChainOutline(): boolean;
   screenToWorld(p: Point): Point;
   /** Selection and editing are only available while the simulation is paused. */
   isPaused(): boolean;
@@ -75,6 +76,7 @@ export function createSelection({
   getActiveTool,
   isSpray,
   isCut,
+  isChainOutline,
   screenToWorld,
   isPaused,
   onSelectionUpdate,
@@ -318,7 +320,7 @@ export function createSelection({
     "mousedown",
     (event) => {
       if (event.button !== 0 || members.length === 0) return;
-      if (getActiveTool().kind === "zoom" || isSpray() || isCut()) return;
+      if (getActiveTool().kind === "zoom" || isSpray() || isCut() || isChainOutline()) return;
       const p = canvasPoint(event);
       const handle = hitHandle(p);
       if (!handle) return;
@@ -349,7 +351,7 @@ export function createSelection({
 
   canvas.addEventListener("mousemove", (event) => {
     if (interaction !== "none" || event.buttons !== 0) return;
-    if (getActiveTool().kind === "zoom" || isSpray() || isCut()) return;
+    if (getActiveTool().kind === "zoom" || isSpray() || isCut() || isChainOutline()) return;
     const handle = hitHandle(canvasPoint(event));
     canvas.style.cursor = handle ? handle.cursor : "";
   });

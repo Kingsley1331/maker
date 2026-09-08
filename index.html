@@ -168,6 +168,18 @@
               <line x1="7" y1="12" x2="17" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
             </svg>
           </button>
+          <button
+            id="chain-toggle"
+            class="view-btn"
+            type="button"
+            title="Place the selected shape as a chain outline"
+            aria-label="Place the selected shape as a chain outline"
+            aria-pressed="false"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="5" y="5" width="14" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2" />
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -422,6 +434,12 @@
             polygon as the cutter. While paused, click a body to choose which one to cut, then drag
             fully inside it to punch a hole. Click another body to change the target. The cut is
             ignored if it overlaps the outline or misses that body.
+          </li>
+          <li>
+            <strong>Chain outline:</strong> pick a circle, rectangle, triangle, pentagon, hexagon,
+            box, or polygon, turn Chain on, then click or drag as usual. The result is a static
+            closed outline that other shapes collide with, instead of a filled body. Spray and Cut
+            turn off when Chain is on.
           </li>
           <li>
             <strong>Box tool:</strong> press empty space and drag to the opposite corner; the rectangle

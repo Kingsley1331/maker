@@ -114,6 +114,7 @@ const input = setupInput({
   getActiveTool: () => ui.getActiveTool(),
   isSpray: () => ui.isSpray(),
   isCut: () => ui.isCut(),
+  isChainOutline: () => ui.isChainOutline(),
   getSpraySample: () => ui.getSpraySample(),
   getSpraySize: () => ui.getSpraySize(),
   getWallThickness: () => ui.getWallThickness(),
