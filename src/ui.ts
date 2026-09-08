@@ -74,6 +74,8 @@ export interface Ui {
   getActiveTool(): ActiveTool;
   /** True when Spray is on and a primitive shape is the active tool. */
   isSpray(): boolean;
+  /** True when Cut is on and a filled spawn shape is the active tool. */
+  isCut(): boolean;
   /** One stamp's properties (defaults, or a random roll inside each Rand range). */
   getSpraySample(): SpraySample;
   /** Size default used for spray spacing (not a random roll). */
@@ -109,6 +111,15 @@ function requireElement<T extends HTMLElement>(id: string): T {
   return el as T;
 }
 
+/** Activate on press so toolbar buttons still work if `click` is suppressed. */
+function bindActivate(button: HTMLElement, handler: () => void): void {
+  button.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    handler();
+  });
+}
+
 export function setupUi({
   onGravityChange,
   onBackgroundChange,
@@ -132,6 +143,7 @@ export function setupUi({
   let selectedShape: ShapeType = "circle";
   let activeTool: ActiveTool = { kind: "shape", shape: selectedShape };
   let spray = false;
+  let cut = false;
 
   // Pause / Play
   let paused = false;
@@ -144,14 +156,14 @@ export function setupUi({
     pauseButton.classList.toggle("is-paused", paused);
   }
 
-  pauseButton.addEventListener("click", () => onPauseToggle(!paused));
+  bindActivate(pauseButton, () => onPauseToggle(!paused));
 
   // Help modal
   const helpDialog = requireElement<HTMLDialogElement>("help-dialog");
   const helpOpen = requireElement<HTMLButtonElement>("help-open");
   const helpClose = requireElement<HTMLButtonElement>("help-close");
-  helpOpen.addEventListener("click", () => helpDialog.showModal());
-  helpClose.addEventListener("click", () => helpDialog.close());
+  bindActivate(helpOpen, () => helpDialog.showModal());
+  bindActivate(helpClose, () => helpDialog.close());
   // A click on the backdrop lands on the dialog element itself, outside the inner panel.
   helpDialog.addEventListener("click", (event) => {
     if (event.target === helpDialog) helpDialog.close();
@@ -233,6 +245,7 @@ export function setupUi({
   // Shape / joint tools (mutually exclusive)
   const zoomTool = requireElement<HTMLButtonElement>("zoom-tool");
   const sprayToggle = requireElement<HTMLButtonElement>("spray-toggle");
+  const cutToggle = requireElement<HTMLButtonElement>("cut-toggle");
   const shapeButtons = Array.from(
     document.querySelectorAll<HTMLButtonElement>(".shape-btn[data-shape]"),
   );
@@ -244,8 +257,19 @@ export function setupUi({
     return tool.kind === "shape" && isPrimitiveShape(tool.shape);
   }
 
+  function cutAllowed(tool: ActiveTool): boolean {
+    return (
+      tool.kind === "shape" &&
+      (isPrimitiveShape(tool.shape) || tool.shape === "box" || tool.shape === "polygon")
+    );
+  }
+
   function isSpray(): boolean {
     return spray && sprayAllowed(activeTool);
+  }
+
+  function isCut(): boolean {
+    return cut && cutAllowed(activeTool);
   }
 
   const sprayInfo = requireElement<HTMLDivElement>("spray-info");
@@ -270,7 +294,15 @@ export function setupUi({
     syncSprayOptions();
   }
 
-  sprayOptionsToggle.addEventListener("click", () => {
+  function syncCut(): void {
+    const allowed = cutAllowed(activeTool);
+    const on = isCut();
+    cutToggle.disabled = !allowed;
+    cutToggle.classList.toggle("is-active", on);
+    cutToggle.setAttribute("aria-pressed", String(on));
+  }
+
+  bindActivate(sprayOptionsToggle, () => {
     sprayOptionsOpen = !sprayOptionsOpen;
     syncSprayOptions();
   });
@@ -280,6 +312,7 @@ export function setupUi({
     if (!sprayAllowed(tool)) spray = false;
     syncToolButtons();
     syncSpray();
+    syncCut();
     syncFrameInfo();
     onToolChange(tool);
   }
@@ -303,16 +336,26 @@ export function setupUi({
     }
   }
 
-  zoomTool.addEventListener("click", () => setActiveTool({ kind: "zoom" }));
+  bindActivate(zoomTool, () => setActiveTool({ kind: "zoom" }));
 
-  sprayToggle.addEventListener("click", () => {
+  bindActivate(sprayToggle, () => {
     if (!sprayAllowed(activeTool)) return;
     spray = !spray;
+    if (spray) cut = false;
     syncSpray();
+    syncCut();
+  });
+
+  bindActivate(cutToggle, () => {
+    if (!cutAllowed(activeTool)) return;
+    cut = !cut;
+    if (cut) spray = false;
+    syncSpray();
+    syncCut();
   });
 
   for (const button of shapeButtons) {
-    button.addEventListener("click", () => {
+    bindActivate(button, () => {
       const shape = button.dataset.shape;
       if (!isShapeType(shape)) return;
       selectedShape = shape;
@@ -321,13 +364,14 @@ export function setupUi({
   }
 
   for (const button of jointButtons) {
-    button.addEventListener("click", () => {
+    bindActivate(button, () => {
       const joint = button.dataset.joint;
       if (!isJointType(joint)) return;
       setActiveTool({ kind: "joint", joint });
     });
   }
   syncSpray();
+  syncCut();
 
   function parseFinite(input: HTMLInputElement, fallback: number): number {
     const n = Number(input.value);
@@ -583,7 +627,7 @@ export function setupUi({
   }
 
   for (const button of bodyTypeButtons) {
-    button.addEventListener("click", () => {
+    bindActivate(button, () => {
       const type = button.dataset.bodyType;
       if (!isBodyType(type)) return;
       onBodyTypeChange(type);
@@ -622,17 +666,17 @@ export function setupUi({
 
   const selectionDuplicate = requireElement<HTMLButtonElement>("selection-duplicate");
   const selectionDelete = requireElement<HTMLButtonElement>("selection-delete");
-  selectionDuplicate.addEventListener("click", () => {
+  bindActivate(selectionDuplicate, () => {
     onDuplicateSelection();
     selectionDuplicate.blur();
   });
-  selectionDelete.addEventListener("click", () => {
+  bindActivate(selectionDelete, () => {
     onDeleteSelection();
     selectionDelete.blur();
   });
 
   const motorDelete = requireElement<HTMLButtonElement>("motor-delete");
-  motorDelete.addEventListener("click", () => {
+  bindActivate(motorDelete, () => {
     onDeleteSelection();
     motorDelete.blur();
   });
@@ -720,6 +764,7 @@ export function setupUi({
     getSelectedShape: () => selectedShape,
     getActiveTool: () => activeTool,
     isSpray,
+    isCut,
     getSpraySample,
     getSpraySize,
     getWallThickness,

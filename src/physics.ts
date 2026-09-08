@@ -229,8 +229,11 @@ export function createPhysics(container: HTMLElement): Physics {
         ctx.closePath();
       }
       traceRing(data.outline);
-      if (data.hole && data.hole.length >= 3) {
-        traceRing(data.hole);
+      const holes = data.holes ?? [];
+      if (holes.length > 0) {
+        for (const hole of holes) {
+          if (hole.length >= 3) traceRing(hole);
+        }
         ctx.fill("evenodd");
       } else {
         ctx.fill();

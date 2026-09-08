@@ -101,6 +101,7 @@ const input = setupInput({
   isPaused: () => physics.isPaused(),
   getActiveTool: () => ui.getActiveTool(),
   isSpray: () => ui.isSpray(),
+  isCut: () => ui.isCut(),
   getSpraySample: () => ui.getSpraySample(),
   getSpraySize: () => ui.getSpraySize(),
   getWallThickness: () => ui.getWallThickness(),

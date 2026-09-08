@@ -53,8 +53,8 @@ export interface BodyUserData {
   fillStyle: string;
   /** Local-space outline in meters, used to fill concave compounds without seams. */
   outline?: Point[];
-  /** Local-space inner ring in meters; filled as a hole against `outline`. */
-  hole?: Point[];
+  /** Local-space inner rings in meters; filled as holes against `outline`. */
+  holes?: Point[][];
   /** When set, this body ignores the global elasticity slider. */
   restitutionOverride?: number;
 }
@@ -416,11 +416,13 @@ export function createFrame(
         { x: toMeters(hw), y: toMeters(hh) },
         { x: toMeters(-hw), y: toMeters(hh) },
       ],
-      hole: [
-        { x: toMeters(-hw + t), y: toMeters(-hh + t) },
-        { x: toMeters(hw - t), y: toMeters(-hh + t) },
-        { x: toMeters(hw - t), y: toMeters(hh - t) },
-        { x: toMeters(-hw + t), y: toMeters(hh - t) },
+      holes: [
+        [
+          { x: toMeters(-hw + t), y: toMeters(-hh + t) },
+          { x: toMeters(hw - t), y: toMeters(-hh + t) },
+          { x: toMeters(hw - t), y: toMeters(hh - t) },
+          { x: toMeters(-hw + t), y: toMeters(hh - t) },
+        ],
       ],
     } satisfies BodyUserData,
   });
@@ -706,8 +708,8 @@ export function scaleBody(body: Body, factor: number): void {
   if (data?.outline) {
     data.outline = data.outline.map((p) => ({ x: p.x * factor, y: p.y * factor }));
   }
-  if (data?.hole) {
-    data.hole = data.hole.map((p) => ({ x: p.x * factor, y: p.y * factor }));
+  if (data?.holes) {
+    data.holes = data.holes.map((ring) => ring.map((p) => ({ x: p.x * factor, y: p.y * factor })));
   }
   body.synchronizeFixtures();
   body.setAwake(true);
@@ -722,7 +724,7 @@ export function cloneBody(world: World, source: Body, offsetM: Point): Body {
         label: srcData.label,
         fillStyle: srcData.fillStyle,
         outline: srcData.outline?.map((p) => ({ x: p.x, y: p.y })),
-        hole: srcData.hole?.map((p) => ({ x: p.x, y: p.y })),
+        holes: srcData.holes?.map((ring) => ring.map((p) => ({ x: p.x, y: p.y }))),
         restitutionOverride: srcData.restitutionOverride,
       }
     : { kind: "shape", label: "Body", fillStyle: DEFAULT_FILL };

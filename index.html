@@ -107,6 +107,19 @@
               <circle cx="15" cy="17" r="2" fill="currentColor" />
             </svg>
           </button>
+          <button
+            id="cut-toggle"
+            class="view-btn"
+            type="button"
+            title="Cut a hole from a body"
+            aria-label="Cut a hole from a body"
+            aria-pressed="false"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2" />
+              <line x1="7" y1="12" x2="17" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -355,6 +368,12 @@
             turn Spray on and drag to stamp tiny copies along the cursor. Set defaults in the Spray
             panel; Rand picks that property at random in the min–max range (two colours for colour)
             for each stamp.
+          </li>
+          <li>
+            <strong>Cut:</strong> pick a circle, rectangle, triangle, pentagon, hexagon, box, or
+            polygon as the cutter. While paused, click a body to choose which one to cut, then drag
+            fully inside it to punch a hole. Click another body to change the target. The cut is
+            ignored if it overlaps the outline or misses that body.
           </li>
           <li>
             <strong>Box tool:</strong> press empty space and drag to the opposite corner; the rectangle

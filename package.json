@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "earcut": "^3.2.3",
     "planck": "^1.5.0",
     "poly-decomp": "^0.3.0"
   },

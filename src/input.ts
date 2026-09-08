@@ -1,4 +1,5 @@
 import { MouseJoint, type Body, type Joint, type World } from "planck";
+import { boxCutter, primitiveCutter, trySubtractHole } from "./cut";
 import { createPin, createRevolute, createRod, createWeld, createWheel, type JointType } from "./joints";
 import type { AfterRender } from "./physics";
 import { createSelection, type Selection } from "./selection";
@@ -30,6 +31,7 @@ const MIN_SIZE = 8;
 /** Minimum distance between sprayed bodies (px). */
 const SPRAY_SPACING = 10;
 const ACCENT = "#3b6fe0";
+const CUT_FILL = "#c44646";
 
 export interface InputOptions {
   world: World;
@@ -43,6 +45,7 @@ export interface InputOptions {
   isPaused(): boolean;
   getActiveTool(): ActiveTool;
   isSpray(): boolean;
+  isCut(): boolean;
   getSpraySample(): SpraySample;
   getSpraySize(): number;
   getWallThickness(): number;
@@ -74,6 +77,7 @@ export function setupInput({
   isPaused,
   getActiveTool,
   isSpray,
+  isCut,
   getSpraySample,
   getSpraySize,
   getWallThickness,
@@ -90,6 +94,7 @@ export function setupInput({
     getZoom,
     getActiveTool,
     isSpray,
+    isCut,
     screenToWorld,
     isPaused,
     onSelectionUpdate,
@@ -129,6 +134,8 @@ export function setupInput({
   let panLast: Point | null = null;
   /** Spray trail: last stamped world-pixel position. */
   let sprayLast: Point | null = null;
+  /** Cut press landed on a new body: this gesture only selects, it must not punch a hole. */
+  let cutSelectOnly = false;
 
   function screenPoint(event: MouseEvent): Point {
     const rect = canvas.getBoundingClientRect();
@@ -256,7 +263,14 @@ export function setupInput({
   function applyCursor(): void {
     if (panning || moveOffset) canvas.style.cursor = "grabbing";
     else if (isZoomTool()) canvas.style.cursor = "grab";
-    else if (isSpray() || isDraftTool() || isCornerDragTool() || isEdgeTool() || (jointType() && isPaused())) {
+    else if (
+      isSpray() ||
+      isCut() ||
+      isDraftTool() ||
+      isCornerDragTool() ||
+      isEdgeTool() ||
+      (jointType() && isPaused())
+    ) {
       canvas.style.cursor = "crosshair";
     } else canvas.style.cursor = "";
   }
@@ -327,7 +341,7 @@ export function setupInput({
     ) {
       return;
     }
-    ghostColor ??= randomColor();
+    ghostColor ??= isCut() ? CUT_FILL : randomColor();
     ghost = { type: tool.shape, x: spawnStart.x, y: spawnStart.y, size, fillStyle: ghostColor };
     ghostSize = size;
   }
@@ -344,6 +358,7 @@ export function setupInput({
     moveOffset = null;
     pendingSelectToggle = false;
     sprayLast = null;
+    cutSelectOnly = false;
     if (grabIdle()) setGrabEnabled(true);
     applyCursor();
     window.removeEventListener("mousemove", onMove);
@@ -482,7 +497,27 @@ export function setupInput({
 
     pressedBody = bodyAt(p);
 
-    if (!pressedBody) {
+    if (isCut()) {
+      // Click a body to choose the cut target; drag (on the target or empty space) punches a hole.
+      if (pressedBody && isPaused()) {
+        const wasTarget = selection.selected === pressedBody;
+        if (selection.members.includes(pressedBody)) {
+          pendingSelectToggle = true;
+        } else {
+          selection.select(pressedBody);
+        }
+        if (!wasTarget) cutSelectOnly = true;
+        else if (!isDraftTool()) spawnStart = p;
+      } else if (!pressedBody) {
+        if (!isDraftTool()) {
+          clickOnlyDeselects = hasSelection();
+          spawnStart = p;
+        }
+      } else if (!isDraftTool()) {
+        spawnStart = p;
+      }
+      setGrabEnabled(false);
+    } else if (!pressedBody) {
       // Any press on empty space clears the selection. A plain click then only deselects, but a
       // drag still sizes and spawns a new shape (primitives only).
       clickOnlyDeselects = hasSelection();
@@ -523,7 +558,8 @@ export function setupInput({
 
     if (isPolygonTool()) {
       if (draft.length < 3) return;
-      createPolygon(world, draft);
+      if (isCut()) trySubtractHole(world, draft, selection.selected);
+      else createPolygon(world, draft);
     } else if (isChainTool()) {
       if (draft.length < 2) return;
       createChain(world, draft);
@@ -534,6 +570,7 @@ export function setupInput({
 
   function onMove(event: MouseEvent): void {
     if (!pressPoint) return;
+    if (eventOnToolbar(event)) return;
     const p = canvasPoint(event);
     hover = p;
     if (mouseJoint) mouseJoint.setTarget(vecToMeters(p));
@@ -561,7 +598,7 @@ export function setupInput({
 
     dragged = true;
     if (isEdgeTool()) {
-      ghostColor ??= randomColor();
+      ghostColor ??= isCut() ? CUT_FILL : randomColor();
       const ends = edgeEndpoints(spawnStart, p);
       ghost = {
         type: "edge",
@@ -575,7 +612,7 @@ export function setupInput({
       return;
     }
     if (isCornerDragTool()) {
-      ghostColor ??= randomColor();
+      ghostColor ??= isCut() ? CUT_FILL : randomColor();
       if (isFrameTool()) {
         const bounds = frameBounds(spawnStart, p, getWallThickness());
         ghost = {
@@ -609,13 +646,21 @@ export function setupInput({
     }
   }
 
+  function eventOnToolbar(event: Event): boolean {
+    const t = event.target;
+    if (!(t instanceof Node)) return false;
+    return !!document.getElementById("toolbar")?.contains(t);
+  }
+
   function onUp(event: MouseEvent): void {
     if (!pressPoint) return;
-    const p = canvasPoint(event);
-    const isClick = Math.hypot(p.x - pressPoint.x, p.y - pressPoint.y) <= clickSlop();
-    const type = jointType();
+    try {
+      if (eventOnToolbar(event)) return;
+      const p = canvasPoint(event);
+      const isClick = Math.hypot(p.x - pressPoint.x, p.y - pressPoint.y) <= clickSlop();
+      const type = jointType();
 
-    endGrab();
+      endGrab();
 
     if (type) {
       if (isPaused() && isClick) {
@@ -626,13 +671,34 @@ export function setupInput({
         }
       }
     } else if (isDraftTool()) {
-      if (isClick && event.detail === 1 && !clickOnlyDeselects && !pressedBody) {
+      if (
+        isClick &&
+        event.detail === 1 &&
+        !clickOnlyDeselects &&
+        !cutSelectOnly &&
+        (!pressedBody || isCut())
+      ) {
         draft.push(p);
         hover = p;
         setGrabEnabled(false);
+      } else if (isCut() && isClick && isPaused() && pendingSelectToggle && pressedBody) {
+        selection.select(pressedBody);
       }
     } else if (spawnStart) {
-      if (isBoxTool()) {
+      if (isCut()) {
+        if (dragged && !cutSelectOnly) {
+          const target = selection.selected;
+          if (isBoxTool()) {
+            trySubtractHole(world, boxCutter(spawnStart, p), target);
+          } else if (ghost && ghost.type !== "box" && ghost.type !== "frame" && ghost.type !== "edge") {
+            trySubtractHole(world, primitiveCutter(ghost.type, ghost.x, ghost.y, ghost.size), target);
+          }
+        } else if (isClick && isPaused() && pendingSelectToggle && pressedBody) {
+          selection.select(pressedBody);
+        } else if (isClick && clickOnlyDeselects && !pressedBody) {
+          selection.deselect();
+        }
+      } else if (isBoxTool()) {
         if (dragged) {
           createBox(world, spawnStart, p, ghostColor ?? randomColor());
         } else if (isClick && !clickOnlyDeselects) {
@@ -683,8 +749,9 @@ export function setupInput({
     } else if (isPaused() && isClick && pendingSelectToggle && pressedBody) {
       selection.select(pressedBody);
     }
-
-    reset();
+    } finally {
+      reset();
+    }
   }
 
   window.addEventListener("keydown", (event) => {
@@ -701,15 +768,16 @@ export function setupInput({
     if (ghost) {
       ctx.save();
       tracePreview(ctx, ghost);
+      const cutting = isCut();
       if (ghost.type !== "edge") {
-        ctx.globalAlpha = 0.45;
+        ctx.globalAlpha = cutting ? 0.28 : 0.45;
         ctx.fillStyle = ghost.fillStyle;
         ctx.fill("evenodd");
         ctx.globalAlpha = 1;
       }
       ctx.setLineDash([5, 4]);
       ctx.lineWidth = 1.5;
-      ctx.strokeStyle = ACCENT;
+      ctx.strokeStyle = cutting ? CUT_FILL : ACCENT;
       ctx.lineCap = "round";
       ctx.stroke();
       ctx.restore();
@@ -737,6 +805,7 @@ export function setupInput({
     if (draft.length === 0) return;
 
     const preview = hover ? [...draft, hover] : draft;
+    const cutting = isCut() && isPolygonTool();
     ctx.save();
     if (isPolygonTool() && preview.length >= 3) {
       ctx.beginPath();
@@ -744,7 +813,7 @@ export function setupInput({
       for (let i = 1; i < preview.length; i++) ctx.lineTo(preview[i].x, preview[i].y);
       ctx.closePath();
       ctx.globalAlpha = 0.2;
-      ctx.fillStyle = ACCENT;
+      ctx.fillStyle = cutting ? CUT_FILL : ACCENT;
       ctx.fill();
       ctx.globalAlpha = 1;
     }
@@ -752,13 +821,13 @@ export function setupInput({
     ctx.beginPath();
     ctx.moveTo(preview[0].x, preview[0].y);
     for (let i = 1; i < preview.length; i++) ctx.lineTo(preview[i].x, preview[i].y);
-    ctx.strokeStyle = ACCENT;
+    ctx.strokeStyle = cutting ? CUT_FILL : ACCENT;
     ctx.lineWidth = 1.5;
     ctx.setLineDash([5, 4]);
     ctx.stroke();
 
     ctx.setLineDash([]);
-    ctx.fillStyle = ACCENT;
+    ctx.fillStyle = cutting ? CUT_FILL : ACCENT;
     for (const vertex of draft) {
       ctx.beginPath();
       ctx.arc(vertex.x, vertex.y, 3.5, 0, Math.PI * 2);
