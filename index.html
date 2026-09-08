@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Physics Sandbox</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <div id="toolbar">
+      <div class="group">
+        <button id="pause-toggle" class="pause-btn" type="button" aria-pressed="false" title="Pause / Play (Space)">
+          Pause
+        </button>
+      </div>
+
+      <div class="group">
+        <span class="label">Shape</span>
+        <div class="shapes">
+          <button class="shape-btn is-active" data-shape="circle" title="Circle" aria-label="Circle">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="8" fill="currentColor" />
+            </svg>
+          </button>
+          <button class="shape-btn" data-shape="rectangle" title="Rectangle" aria-label="Rectangle">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="4" y="4" width="16" height="16" rx="1" fill="currentColor" />
+            </svg>
+          </button>
+          <button class="shape-btn" data-shape="triangle" title="Triangle" aria-label="Triangle">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <polygon points="12,4 19.0,16 5.0,16" fill="currentColor" />
+            </svg>
+          </button>
+          <button class="shape-btn" data-shape="pentagon" title="Pentagon" aria-label="Pentagon">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <polygon points="12,4 19.6,9.5 16.7,18.5 7.3,18.5 4.4,9.5" fill="currentColor" />
+            </svg>
+          </button>
+          <button class="shape-btn" data-shape="hexagon" title="Hexagon" aria-label="Hexagon">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <polygon points="12,4 18.9,8 18.9,16 12,20 5.1,16 5.1,8" fill="currentColor" />
+            </svg>
+          </button>
+          <button class="shape-btn" data-shape="polygon" title="Polygon" aria-label="Polygon">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <polygon points="4,16 6,6 13,3 20,9 17,20" fill="currentColor" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="group">
+        <label class="slider" for="gravity-y">
+          <span class="label">Gravity Y <output id="gravity-y-value">1.00</output></span>
+          <input id="gravity-y" type="range" min="-2" max="2" step="0.05" value="1" />
+        </label>
+        <label class="slider" for="gravity-x">
+          <span class="label">Gravity X <output id="gravity-x-value">0.00</output></span>
+          <input id="gravity-x" type="range" min="-2" max="2" step="0.05" value="0" />
+        </label>
+      </div>
+
+      <div class="group">
+        <label class="color-row" for="background-color">
+          <span class="label">Background</span>
+          <input id="background-color" type="color" value="#ffffff" />
+        </label>
+      </div>
+
+      <div id="selection-info" class="group" hidden>
+        <span class="label">Selected</span>
+        <dl class="info">
+          <dt>Shape</dt>
+          <dd id="selection-shape"></dd>
+          <dt>Size</dt>
+          <dd id="selection-size"></dd>
+          <dt>Mass</dt>
+          <dd id="selection-mass"></dd>
+          <dt>Angle</dt>
+          <dd id="selection-angle"></dd>
+        </dl>
+      </div>
+
+      <p class="hint">
+        Click empty space to spawn a shape, or drag to set its size. With the polygon tool, click
+        to add points and double-click to finish (at least 3 points). Drag and release a shape to
+        throw it. While paused, press a shape to select it and drag to move it; drag the corner
+        handles to resize and the top knob to rotate (hold Shift to snap). Click empty space or
+        press Escape to deselect.
+      </p>
+      </div>
+
+      <div id="scene"></div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
