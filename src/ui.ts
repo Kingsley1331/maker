@@ -1,4 +1,4 @@
-import type { Body, Joint } from "planck";
+import type { Body, BodyType, Joint } from "planck";
 import {
   getAngleRangeDeg,
   getMotorSpeed,
@@ -8,9 +8,10 @@ import {
   motorJointLabel,
   type JointType,
 } from "./joints";
-import { bodyLabel, groupBoundsPx, groupMass } from "./group";
+import { bodyLabel, groupBoundsPx } from "./group";
 import { bodyBoundsPx } from "./physics";
-import { SHAPE_TYPES, type JointUserData, type ShapeType } from "./shapes";
+import { getBodyData, SHAPE_TYPES, type JointUserData, type ShapeType } from "./shapes";
+import { toPixels } from "./units";
 
 export type ActiveTool =
   | { kind: "shape"; shape: ShapeType }
@@ -25,6 +26,14 @@ export interface UiOptions {
   onMotorSpeedChange(speed: number): void;
   /** Called when the angular range slider moves while a pin / revolute is selected (degrees). */
   onMotorRangeChange(degrees: number): void;
+  /** Called when the Static / Dynamic / Kinematic control is used on the current selection. */
+  onBodyTypeChange(type: BodyType): void;
+  onMassChange(mass: number): void;
+  /** Linear velocity in pixels per second. */
+  onVelocityChange(vxPx: number, vyPx: number): void;
+  /** Angular velocity in degrees per second. */
+  onSpinChange(degPerSec: number): void;
+  onColorChange(color: string): void;
 }
 
 export interface Ui {
@@ -63,6 +72,11 @@ export function setupUi({
   onPauseToggle,
   onMotorSpeedChange,
   onMotorRangeChange,
+  onBodyTypeChange,
+  onMassChange,
+  onVelocityChange,
+  onSpinChange,
+  onColorChange,
 }: UiOptions): Ui {
   let selectedShape: ShapeType = "circle";
   let activeTool: ActiveTool = { kind: "shape", shape: selectedShape };
@@ -79,8 +93,22 @@ export function setupUi({
   }
 
   pauseButton.addEventListener("click", () => onPauseToggle(!paused));
+
+  // Help modal
+  const helpDialog = requireElement<HTMLDialogElement>("help-dialog");
+  const helpOpen = requireElement<HTMLButtonElement>("help-open");
+  const helpClose = requireElement<HTMLButtonElement>("help-close");
+  helpOpen.addEventListener("click", () => helpDialog.showModal());
+  helpClose.addEventListener("click", () => helpDialog.close());
+  // A click on the backdrop lands on the dialog element itself, outside the inner panel.
+  helpDialog.addEventListener("click", (event) => {
+    if (event.target === helpDialog) helpDialog.close();
+  });
+
   window.addEventListener("keydown", (event) => {
     if (event.code !== "Space" || event.repeat) return;
+    // Space belongs to the modal while it is open (e.g. activating its Close button).
+    if (helpDialog.open) return;
     // Don't hijack Space when a form control has focus (a focused button already clicks on Space).
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLButtonElement) return;
     event.preventDefault();
@@ -157,8 +185,68 @@ export function setupUi({
   const selectionInfo = requireElement<HTMLDivElement>("selection-info");
   const selectionShape = requireElement<HTMLElement>("selection-shape");
   const selectionSize = requireElement<HTMLElement>("selection-size");
-  const selectionMass = requireElement<HTMLElement>("selection-mass");
   const selectionAngle = requireElement<HTMLElement>("selection-angle");
+  const selectionMass = requireElement<HTMLInputElement>("selection-mass");
+  const selectionVx = requireElement<HTMLInputElement>("selection-vx");
+  const selectionVy = requireElement<HTMLInputElement>("selection-vy");
+  const selectionSpin = requireElement<HTMLInputElement>("selection-spin");
+  const selectionColor = requireElement<HTMLInputElement>("selection-color");
+  const bodyTypeButtons = Array.from(
+    document.querySelectorAll<HTMLButtonElement>("#body-type [data-body-type]"),
+  );
+
+  function isBodyType(value: string | undefined): value is BodyType {
+    return value === "static" || value === "dynamic" || value === "kinematic";
+  }
+
+  function syncBodyTypeButtons(members: readonly Body[]): void {
+    const types = new Set(members.map((body) => body.getType()));
+    const shared = types.size === 1 ? [...types][0] : null;
+    for (const button of bodyTypeButtons) {
+      button.classList.toggle("is-active", button.dataset.bodyType === shared);
+    }
+  }
+
+  function setIfUnfocused(input: HTMLInputElement, value: string): void {
+    if (document.activeElement === input) return;
+    if (input.value !== value) input.value = value;
+  }
+
+  function toColorInput(value: string): string {
+    return /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : "#888888";
+  }
+
+  for (const button of bodyTypeButtons) {
+    button.addEventListener("click", () => {
+      const type = button.dataset.bodyType;
+      if (!isBodyType(type)) return;
+      onBodyTypeChange(type);
+      button.blur();
+    });
+  }
+
+  selectionMass.addEventListener("input", () => {
+    const mass = Number(selectionMass.value);
+    if (!Number.isFinite(mass)) return;
+    onMassChange(Math.max(0.01, mass));
+  });
+
+  function emitVelocity(): void {
+    const vx = Number(selectionVx.value);
+    const vy = Number(selectionVy.value);
+    if (!Number.isFinite(vx) || !Number.isFinite(vy)) return;
+    onVelocityChange(vx, vy);
+  }
+  selectionVx.addEventListener("input", emitVelocity);
+  selectionVy.addEventListener("input", emitVelocity);
+
+  selectionSpin.addEventListener("input", () => {
+    const spin = Number(selectionSpin.value);
+    if (!Number.isFinite(spin)) return;
+    onSpinChange(spin);
+  });
+
+  selectionColor.addEventListener("input", () => onColorChange(selectionColor.value));
 
   function showSelectionInfo(body: Body | null, members: readonly Body[] = body ? [body] : []): void {
     if (!body || members.length === 0) {
@@ -172,9 +260,21 @@ export function setupUi({
     selectionInfo.hidden = false;
     selectionShape.textContent = isGroup ? `Group (${members.length} shapes)` : bodyLabel(body);
     selectionSize.textContent = `${Math.round(width)} x ${Math.round(height)} px`;
-    selectionMass.textContent = (isGroup ? groupMass([...members]) : body.getMass()).toFixed(2);
     const degrees = (((body.getAngle() * 180) / Math.PI) % 360 + 360) % 360;
     selectionAngle.textContent = `${Math.round(degrees)}\u00B0`;
+    syncBodyTypeButtons(members);
+
+    selectionMass.disabled = !members.some((member) => member.getType() === "dynamic");
+    setIfUnfocused(selectionMass, body.getMass().toFixed(2));
+    const vel = body.getLinearVelocity();
+    setIfUnfocused(selectionVx, toPixels(vel.x).toFixed(1));
+    setIfUnfocused(selectionVy, toPixels(vel.y).toFixed(1));
+    setIfUnfocused(selectionSpin, ((body.getAngularVelocity() * 180) / Math.PI).toFixed(1));
+    if (document.activeElement !== selectionColor) {
+      const fill = getBodyData(body)?.fillStyle ?? "#888888";
+      const hex = toColorInput(fill);
+      if (selectionColor.value !== hex) selectionColor.value = hex;
+    }
   }
 
   // Selected joint motor

@@ -74,10 +74,9 @@ type WorldTransform = (p: Point) => Point;
 
 /**
  * After the members have been moved, keep joints consistent:
- * - anchors on static non-members (the ground a pin hangs from) get the same world transform, so
- *   the pin travels with the shapes (ground is at the origin with angle 0, so its local anchor is
- *   the world point). Anchors on dynamic non-members (another shape edited separately) are left
- *   alone; the joint pulls them back together on Play, as before;
+ * - anchors on non-members that are not shapes (the ground a pin hangs from) get the same world
+ *   transform, so the pin travels with the shapes. Anchors on another *shape* (even a static one)
+ *   edited separately are left alone; the joint pulls them back together on Play, as before;
  * - when scaling, member-side anchors, weld/wheel draw points and rod lengths scale too, so the
  *   joint stays on the same spot of each resized shape.
  */
@@ -90,7 +89,8 @@ function fixJoints(bodies: Body[], transform: WorldTransform, scale: number): vo
     const bodyB = joint.getBodyB();
 
     if (!members.has(bodyA)) {
-      if (!bodyA.isDynamic()) {
+      // Carry the world-pin (ground) along; another shape's own anchor stays put.
+      if (getBodyData(bodyA)?.kind !== "shape") {
         const moved = transform(bodyA.getWorldPoint(j.m_localAnchorA));
         const local = bodyA.getLocalPoint(moved);
         j.m_localAnchorA.x = local.x;
@@ -102,7 +102,7 @@ function fixJoints(bodies: Body[], transform: WorldTransform, scale: number): vo
     }
 
     if (!members.has(bodyB)) {
-      if (!bodyB.isDynamic()) {
+      if (getBodyData(bodyB)?.kind !== "shape") {
         const moved = transform(bodyB.getWorldPoint(j.m_localAnchorB));
         const local = bodyB.getLocalPoint(moved);
         j.m_localAnchorB.x = local.x;

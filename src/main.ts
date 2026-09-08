@@ -1,7 +1,9 @@
 import { createPhysics } from "./physics";
 import { setupInput } from "./input";
 import { setAngleRange, setJointMotor } from "./joints";
+import { getBodyData, setBodyMass } from "./shapes";
 import { setupUi } from "./ui";
+import { vecToMeters } from "./units";
 
 const scene = document.getElementById("scene");
 if (!scene) {
@@ -32,6 +34,33 @@ const ui = setupUi({
   onMotorRangeChange: (degrees) => {
     const joint = input.selection.selectedJoint;
     if (joint) setAngleRange(joint, degrees);
+  },
+  onBodyTypeChange: (type) => {
+    for (const body of input.selection.members) {
+      body.setType(type);
+      if (type !== "dynamic") {
+        body.setLinearVelocity({ x: 0, y: 0 });
+        body.setAngularVelocity(0);
+      }
+      body.setAwake(true);
+    }
+  },
+  onMassChange: (mass) => {
+    for (const body of input.selection.members) setBodyMass(body, mass);
+  },
+  onVelocityChange: (vxPx, vyPx) => {
+    const v = vecToMeters({ x: vxPx, y: vyPx });
+    for (const body of input.selection.members) body.setLinearVelocity(v);
+  },
+  onSpinChange: (degPerSec) => {
+    const w = (degPerSec * Math.PI) / 180;
+    for (const body of input.selection.members) body.setAngularVelocity(w);
+  },
+  onColorChange: (color) => {
+    for (const body of input.selection.members) {
+      const data = getBodyData(body);
+      if (data) data.fillStyle = color;
+    }
   },
 });
 

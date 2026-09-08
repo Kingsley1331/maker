@@ -277,7 +277,7 @@ export function setupInput({
         // Playing: no spawn; empty presses should not grab.
         selection.deselect();
         setGrabEnabled(false);
-      } else if (grabEnabled) {
+      } else if (grabEnabled && pressedBody.isDynamic()) {
         startGrab(pressedBody, p);
       }
       window.addEventListener("mousemove", onMove);
@@ -309,7 +309,7 @@ export function setupInput({
       const pos = pressedBody.getPosition();
       moveOffset = { x: toPixels(pos.x) - p.x, y: toPixels(pos.y) - p.y };
       applyCursor();
-    } else if (grabEnabled) {
+    } else if (grabEnabled && pressedBody.isDynamic()) {
       startGrab(pressedBody, p);
     }
 

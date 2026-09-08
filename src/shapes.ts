@@ -85,8 +85,18 @@ export function getBodyData(body: Body): BodyUserData | undefined {
 }
 
 export function isPickable(body: Body): boolean {
-  const data = getBodyData(body);
-  return body.isDynamic() && data?.kind === "shape";
+  return getBodyData(body)?.kind === "shape";
+}
+
+/** Override a dynamic body's mass, scaling inertia so spin stays consistent with density. */
+export function setBodyMass(body: Body, mass: number): void {
+  if (body.getType() !== "dynamic") return;
+  const data = { mass: 0, center: { x: 0, y: 0 }, I: 0 };
+  body.getMassData(data);
+  const old = data.mass;
+  data.mass = Math.max(0.01, mass);
+  if (old > 0) data.I *= data.mass / old;
+  body.setMassData(data);
 }
 
 function primitiveLabel(type: PrimitiveShape): string {
