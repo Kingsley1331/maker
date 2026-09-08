@@ -6,8 +6,10 @@ import {
   boxBounds,
   createBody,
   createBox,
+  createFrame,
   createPolygon,
   DEFAULT_SIZE,
+  frameBounds,
   randomColor,
   setBodyMass,
   tracePreview,
@@ -40,6 +42,7 @@ export interface InputOptions {
   isSpray(): boolean;
   getSpraySample(): SpraySample;
   getSpraySize(): number;
+  getWallThickness(): number;
   onSelectionUpdate(body: Body | null, members: Body[]): void;
   onJointSelectionUpdate(joint: Joint | null): void;
   onZoomChange(zoom: number): void;
@@ -70,6 +73,7 @@ export function setupInput({
   isSpray,
   getSpraySample,
   getSpraySize,
+  getWallThickness,
   onSelectionUpdate,
   onJointSelectionUpdate,
   onZoomChange,
@@ -109,6 +113,8 @@ export function setupInput({
   let clickOnlyDeselects = false;
   /** Paused move gesture: body centre (px) relative to the pointer at press time. */
   let moveOffset: Point | null = null;
+  /** Pressed a body already in the selection; toggle group/solo on click-up, not press. */
+  let pendingSelectToggle = false;
   /** Vertices of an in-progress polygon (polygon tool). */
   let draft: Point[] = [];
   /** Cursor position for rubber-band previews (polygon draft or pending joint). */
@@ -157,10 +163,21 @@ export function setupInput({
     return tool.kind === "shape" && tool.shape === "box";
   }
 
+  function isFrameTool(): boolean {
+    const tool = getActiveTool();
+    return tool.kind === "shape" && tool.shape === "frame";
+  }
+
+  function isCornerDragTool(): boolean {
+    return isBoxTool() || isFrameTool();
+  }
+
   function sprayShape(): PrimitiveShape | null {
     if (!isSpray()) return null;
     const tool = getActiveTool();
-    if (tool.kind !== "shape" || tool.shape === "polygon" || tool.shape === "box") return null;
+    if (tool.kind !== "shape" || tool.shape === "polygon" || tool.shape === "box" || tool.shape === "frame") {
+      return null;
+    }
     return tool.shape;
   }
 
@@ -215,7 +232,7 @@ export function setupInput({
   function applyCursor(): void {
     if (panning || moveOffset) canvas.style.cursor = "grabbing";
     else if (isZoomTool()) canvas.style.cursor = "grab";
-    else if (isSpray() || isPolygonTool() || isBoxTool() || (jointType() && isPaused())) {
+    else if (isSpray() || isPolygonTool() || isCornerDragTool() || (jointType() && isPaused())) {
       canvas.style.cursor = "crosshair";
     } else canvas.style.cursor = "";
   }
@@ -276,7 +293,9 @@ export function setupInput({
   function rebuildGhost(size: number): void {
     if (!spawnStart) return;
     const tool = getActiveTool();
-    if (tool.kind !== "shape" || tool.shape === "polygon" || tool.shape === "box") return;
+    if (tool.kind !== "shape" || tool.shape === "polygon" || tool.shape === "box" || tool.shape === "frame") {
+      return;
+    }
     ghostColor ??= randomColor();
     ghost = { type: tool.shape, x: spawnStart.x, y: spawnStart.y, size, fillStyle: ghostColor };
     ghostSize = size;
@@ -292,6 +311,7 @@ export function setupInput({
     ghostColor = undefined;
     clickOnlyDeselects = false;
     moveOffset = null;
+    pendingSelectToggle = false;
     sprayLast = null;
     if (grabIdle()) setGrabEnabled(true);
     applyCursor();
@@ -439,8 +459,14 @@ export function setupInput({
       if (!isPolygonTool()) spawnStart = p;
       setGrabEnabled(false);
     } else if (isPaused()) {
-      // Paused: the press selects right away and dragging repositions the shape.
-      selection.select(pressedBody);
+      // Paused: select a new body on press so a drag can move it. If this body is already in the
+      // selection (a group member, or the solo shape), keep that selection for dragging and
+      // toggle group/solo only on a click-up.
+      if (selection.members.includes(pressedBody)) {
+        pendingSelectToggle = true;
+      } else {
+        selection.select(pressedBody);
+      }
       const pos = pressedBody.getPosition();
       moveOffset = { x: toPixels(pos.x) - p.x, y: toPixels(pos.y) - p.y };
       applyCursor();
@@ -499,18 +525,32 @@ export function setupInput({
     if (!dragged && dist <= clickSlop()) return;
 
     dragged = true;
-    if (isBoxTool()) {
+    if (isCornerDragTool()) {
       ghostColor ??= randomColor();
-      const bounds = boxBounds(spawnStart, p);
-      ghost = {
-        type: "box",
-        x: bounds.x,
-        y: bounds.y,
-        w: bounds.w,
-        h: bounds.h,
-        size: 0,
-        fillStyle: ghostColor,
-      };
+      if (isFrameTool()) {
+        const bounds = frameBounds(spawnStart, p, getWallThickness());
+        ghost = {
+          type: "frame",
+          x: bounds.x,
+          y: bounds.y,
+          w: bounds.w,
+          h: bounds.h,
+          size: 0,
+          fillStyle: ghostColor,
+          thickness: bounds.thickness,
+        };
+      } else {
+        const bounds = boxBounds(spawnStart, p);
+        ghost = {
+          type: "box",
+          x: bounds.x,
+          y: bounds.y,
+          w: bounds.w,
+          h: bounds.h,
+          size: 0,
+          fillStyle: ghostColor,
+        };
+      }
       return;
     }
 
@@ -553,16 +593,30 @@ export function setupInput({
             { x: spawnStart.x + DEFAULT_SIZE, y: spawnStart.y + DEFAULT_SIZE },
           );
         }
-      } else if (dragged && ghost && ghost.type !== "box") {
+      } else if (isFrameTool()) {
+        const color = ghostColor ?? randomColor();
+        const thickness = getWallThickness();
+        if (dragged) {
+          createFrame(world, spawnStart, p, thickness, color);
+        } else if (isClick && !clickOnlyDeselects) {
+          createFrame(
+            world,
+            { x: spawnStart.x - DEFAULT_SIZE, y: spawnStart.y - DEFAULT_SIZE },
+            { x: spawnStart.x + DEFAULT_SIZE, y: spawnStart.y + DEFAULT_SIZE },
+            thickness,
+          );
+        }
+      } else if (dragged && ghost && ghost.type !== "box" && ghost.type !== "frame") {
         createBody(world, ghost.type, ghost.x, ghost.y, ghost.size, ghost.fillStyle);
       } else if (isClick && !clickOnlyDeselects) {
         const tool = getActiveTool();
-        if (tool.kind === "shape" && tool.shape !== "polygon" && tool.shape !== "box") {
+        if (tool.kind === "shape" && tool.shape !== "polygon" && tool.shape !== "box" && tool.shape !== "frame") {
           createBody(world, tool.shape, spawnStart.x, spawnStart.y, DEFAULT_SIZE);
         }
       }
+    } else if (isPaused() && isClick && pendingSelectToggle && pressedBody) {
+      selection.select(pressedBody);
     }
-    // Paused body presses were selected on mousedown (and moved on drag); nothing more to do.
 
     reset();
   }
@@ -583,7 +637,7 @@ export function setupInput({
       tracePreview(ctx, ghost);
       ctx.globalAlpha = 0.45;
       ctx.fillStyle = ghost.fillStyle;
-      ctx.fill();
+      ctx.fill("evenodd");
       ctx.globalAlpha = 1;
       ctx.setLineDash([5, 4]);
       ctx.lineWidth = 1.5;

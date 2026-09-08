@@ -1,6 +1,7 @@
 import { createPhysics } from "./physics";
 import { setupInput } from "./input";
 import { setAngleRange, setJointMotor } from "./joints";
+import { deleteSelection, duplicateSelection } from "./scene-edit";
 import { getBodyData, setBodyMass } from "./shapes";
 import { setupUi } from "./ui";
 import { vecToMeters } from "./units";
@@ -66,6 +67,20 @@ const ui = setupUi({
   onToolChange: (tool) => {
     if (tool.kind === "zoom") input.selection.deselect();
   },
+  onDeleteSelection: () => {
+    if (!physics.isPaused()) return;
+    const { members, selectedJoint } = input.selection;
+    if (!selectedJoint && members.length === 0) return;
+    deleteSelection(physics.world, members, selectedJoint);
+    input.selection.deselect();
+  },
+  onDuplicateSelection: () => {
+    if (!physics.isPaused()) return;
+    const { members, selected } = input.selection;
+    if (members.length === 0) return;
+    const { primary } = duplicateSelection(physics.world, physics.ground, members, selected);
+    if (primary) input.selection.select(primary);
+  },
 });
 
 const input = setupInput({
@@ -82,6 +97,7 @@ const input = setupInput({
   isSpray: () => ui.isSpray(),
   getSpraySample: () => ui.getSpraySample(),
   getSpraySize: () => ui.getSpraySize(),
+  getWallThickness: () => ui.getWallThickness(),
   onSelectionUpdate: (body, members) => ui.showSelectionInfo(body, members),
   onJointSelectionUpdate: (joint) => {
     physics.setSelectedJoint(joint);

@@ -47,6 +47,11 @@
               <rect x="3" y="7" width="18" height="10" rx="1" fill="currentColor" />
             </svg>
           </button>
+          <button class="shape-btn" data-shape="frame" title="Walls (4-sided box)" aria-label="Walls">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="4" y="4" width="16" height="16" rx="1" fill="none" stroke="currentColor" stroke-width="2.5" />
+            </svg>
+          </button>
           <button class="shape-btn" data-shape="triangle" title="Triangle" aria-label="Triangle">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <polygon points="12,4 19.0,16 5.0,16" fill="currentColor" />
@@ -151,6 +156,14 @@
           <input id="spray-spin-max" type="number" step="10" value="180" disabled />
         </div>
         </div>
+      </div>
+
+      <div id="frame-info" class="group" hidden>
+        <span class="label">Walls</span>
+        <dl class="info">
+          <dt>Thickness</dt>
+          <dd><input id="wall-thickness" type="number" min="2" step="1" value="12" /></dd>
+        </dl>
       </div>
 
       <div class="group">
@@ -263,6 +276,10 @@
           <button type="button" data-body-type="dynamic">Dynamic</button>
           <button type="button" data-body-type="kinematic">Kinematic</button>
         </div>
+        <div class="selection-actions">
+          <button id="selection-duplicate" type="button" title="Duplicate (Ctrl+D)">Duplicate</button>
+          <button id="selection-delete" type="button" title="Delete">Delete</button>
+        </div>
       </div>
 
       <div id="motor-info" class="group" hidden>
@@ -279,6 +296,9 @@
           <span class="label">Range <output id="motor-range-value">360°</output></span>
           <input id="motor-range" type="range" min="0" max="360" step="5" value="360" />
         </label>
+        <div class="selection-actions">
+          <button id="motor-delete" type="button" title="Delete joint">Delete joint</button>
+        </div>
       </div>
 
       </div>
@@ -310,6 +330,10 @@
             is created on release.
           </li>
           <li>
+            <strong>Walls tool:</strong> same corner-to-corner drag as Box, but the result is a hollow
+            rectangle of four walls. Set wall thickness in the Walls panel.
+          </li>
+          <li>
             <strong>Polygon tool:</strong> click to add points and double-click to finish (at least 3
             points).
           </li>
@@ -320,9 +344,14 @@
           </li>
           <li>
             <strong>Groups:</strong> shapes connected by joints select together. Click a shape in the
-            group to edit it alone; click it again to reselect the group.
+            group (without dragging) to edit it alone; click it again to reselect the group.
           </li>
           <li><strong>Deselect:</strong> click empty space or press Escape.</li>
+          <li>
+            <strong>Copy / delete (paused):</strong> with a shape or group selected, use Duplicate or
+            Delete in the Selected panel, or press Ctrl+D / Delete. With a motor joint selected, Delete
+            removes that joint.
+          </li>
           <li>
             <strong>Joints (paused):</strong> pick a joint tool. Pin attaches a body to the world at the
             click. Revolute, rod, weld, and wheel take two clicks on different bodies.

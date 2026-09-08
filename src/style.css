@@ -103,7 +103,7 @@ body {
 }
 
 .shapes {
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(4, 1fr);
 }
 
 .joints {
@@ -111,7 +111,7 @@ body {
 }
 
 .view {
-  grid-template-columns: repeat(7, 1fr);
+  grid-template-columns: repeat(4, 1fr);
 }
 
 .shape-btn,
@@ -175,6 +175,31 @@ body {
 
 .segmented button:hover {
   background: #343a45;
+}
+
+.selection-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.selection-actions button {
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 11px;
+  color: #e6e6e6;
+  background: #2a2f38;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.selection-actions button:hover {
+  background: #343a45;
+}
+
+#motor-info .selection-actions {
+  grid-template-columns: 1fr;
 }
 
 .slider {

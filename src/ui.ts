@@ -10,7 +10,16 @@ import {
 } from "./joints";
 import { bodyLabel, groupBoundsPx } from "./group";
 import { bodyBoundsPx, MAX_ZOOM, MIN_ZOOM } from "./physics";
-import { DEFAULT_FILL, getBodyData, PRIMITIVE_SHAPES, SHAPE_TYPES, type JointUserData, type ShapeType } from "./shapes";
+import {
+  DEFAULT_FILL,
+  DEFAULT_WALL_THICKNESS,
+  getBodyData,
+  isPrimitiveShape,
+  MIN_WALL_THICKNESS,
+  SHAPE_TYPES,
+  type JointUserData,
+  type ShapeType,
+} from "./shapes";
 import { toPixels } from "./units";
 
 export type ActiveTool =
@@ -39,6 +48,10 @@ export interface UiOptions {
   onZoomChange(zoom: number): void;
   /** Fired when the shape, joint, or zoom tool changes. */
   onToolChange(tool: ActiveTool): void;
+  /** Delete the current body/group or selected joint (paused only). */
+  onDeleteSelection(): void;
+  /** Duplicate the current body/group (paused only). */
+  onDuplicateSelection(): void;
 }
 
 export interface SpraySample {
@@ -60,6 +73,8 @@ export interface Ui {
   getSpraySample(): SpraySample;
   /** Size default used for spray spacing (not a random roll). */
   getSpraySize(): number;
+  /** Wall thickness in px for the four-sided frame tool. */
+  getWallThickness(): number;
   /**
    * Show (or hide, when null) the readout for the current selection. `members` is every selected
    * shape; more than one means a jointed group.
@@ -102,6 +117,8 @@ export function setupUi({
   onColorChange,
   onZoomChange,
   onToolChange,
+  onDeleteSelection,
+  onDuplicateSelection,
 }: UiOptions): Ui {
   let selectedShape: ShapeType = "circle";
   let activeTool: ActiveTool = { kind: "shape", shape: selectedShape };
@@ -188,6 +205,19 @@ export function setupUi({
       event.preventDefault();
       showZoom(1);
       onZoomChange(1);
+      return;
+    }
+
+    if (!paused) return;
+
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      onDeleteSelection();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && (event.key === "d" || event.key === "D")) {
+      event.preventDefault();
+      onDuplicateSelection();
     }
   });
 
@@ -202,7 +232,7 @@ export function setupUi({
   );
 
   function sprayAllowed(tool: ActiveTool): boolean {
-    return tool.kind === "shape" && PRIMITIVE_SHAPES.includes(tool.shape);
+    return tool.kind === "shape" && isPrimitiveShape(tool.shape);
   }
 
   function isSpray(): boolean {
@@ -241,6 +271,7 @@ export function setupUi({
     if (!sprayAllowed(tool)) spray = false;
     syncToolButtons();
     syncSpray();
+    syncFrameInfo();
     onToolChange(tool);
   }
 
@@ -416,6 +447,19 @@ export function setupUi({
     return Math.max(1, parseFinite(spraySize, 6));
   }
 
+  const frameInfo = requireElement<HTMLDivElement>("frame-info");
+  const wallThickness = requireElement<HTMLInputElement>("wall-thickness");
+
+  function syncFrameInfo(): void {
+    frameInfo.hidden = !(activeTool.kind === "shape" && activeTool.shape === "frame");
+  }
+
+  function getWallThickness(): number {
+    return Math.max(MIN_WALL_THICKNESS, parseFinite(wallThickness, DEFAULT_WALL_THICKNESS));
+  }
+
+  syncFrameInfo();
+
   function getSpraySample(): SpraySample {
     const a = /^#[0-9a-fA-F]{6}$/.test(sprayColor.value) ? sprayColor.value : DEFAULT_FILL;
     const b = /^#[0-9a-fA-F]{6}$/.test(sprayColorB.value) ? sprayColorB.value : a;
@@ -521,6 +565,23 @@ export function setupUi({
 
   selectionColor.addEventListener("input", () => onColorChange(selectionColor.value));
 
+  const selectionDuplicate = requireElement<HTMLButtonElement>("selection-duplicate");
+  const selectionDelete = requireElement<HTMLButtonElement>("selection-delete");
+  selectionDuplicate.addEventListener("click", () => {
+    onDuplicateSelection();
+    selectionDuplicate.blur();
+  });
+  selectionDelete.addEventListener("click", () => {
+    onDeleteSelection();
+    selectionDelete.blur();
+  });
+
+  const motorDelete = requireElement<HTMLButtonElement>("motor-delete");
+  motorDelete.addEventListener("click", () => {
+    onDeleteSelection();
+    motorDelete.blur();
+  });
+
   function showSelectionInfo(body: Body | null, members: readonly Body[] = body ? [body] : []): void {
     if (!body || members.length === 0) {
       selectionInfo.hidden = true;
@@ -605,6 +666,7 @@ export function setupUi({
     isSpray,
     getSpraySample,
     getSpraySize,
+    getWallThickness,
     showSelectionInfo,
     showMotorInfo,
     setPaused,

@@ -14,7 +14,7 @@ import {
 Settings.maxPolygonVertices = 16;
 
 export type PrimitiveShape = "circle" | "rectangle" | "triangle" | "pentagon" | "hexagon";
-export type ShapeType = PrimitiveShape | "polygon" | "box";
+export type ShapeType = PrimitiveShape | "polygon" | "box" | "frame";
 
 export const PRIMITIVE_SHAPES: PrimitiveShape[] = [
   "circle",
@@ -24,12 +24,23 @@ export const PRIMITIVE_SHAPES: PrimitiveShape[] = [
   "hexagon",
 ];
 
-export const SHAPE_TYPES: ShapeType[] = [...PRIMITIVE_SHAPES, "box", "polygon"];
+export const SHAPE_TYPES: ShapeType[] = [...PRIMITIVE_SHAPES, "box", "frame", "polygon"];
+
+export function isPrimitiveShape(value: ShapeType): value is PrimitiveShape {
+  return (PRIMITIVE_SHAPES as readonly ShapeType[]).includes(value);
+}
 
 /** Pale blue-leaning duck egg; used for newly spawned shapes. */
 export const DEFAULT_FILL = "#b8d8e4";
 
 export const DEFAULT_SIZE = 28;
+
+/** Default wall thickness for four-sided frames (px). */
+export const DEFAULT_WALL_THICKNESS = 12;
+/** Smallest wall thickness the toolbar / spawn path will use (px). */
+export const MIN_WALL_THICKNESS = 2;
+/** Inner opening kept when clamping a frame so the hole never collapses (px). */
+const FRAME_INNER_GAP = 4;
 
 export type { Point };
 
@@ -41,18 +52,22 @@ export interface BodyUserData {
   fillStyle: string;
   /** Local-space outline in meters, used to fill concave compounds without seams. */
   outline?: Point[];
+  /** Local-space inner ring in meters; filled as a hole against `outline`. */
+  hole?: Point[];
 }
 
 export interface ShapePreview {
-  type: PrimitiveShape | "box";
+  type: PrimitiveShape | "box" | "frame";
   x: number;
   y: number;
   fillStyle: string;
-  /** Nominal radius in px; unused when `type` is `"box"`. */
+  /** Nominal radius in px; unused when `type` is `"box"` or `"frame"`. */
   size: number;
-  /** Top-left width/height in px when `type` is `"box"`. */
+  /** Top-left width/height in px when `type` is `"box"` or `"frame"`. */
   w?: number;
   h?: number;
+  /** Wall thickness in px when `type` is `"frame"`. */
+  thickness?: number;
 }
 
 export interface JointUserData {
@@ -206,21 +221,47 @@ export function createBody(
 /** Smallest side length a dragged box can have (px). Matches the radial-spawn minimum. */
 const MIN_BOX = 8;
 
-/** Axis-aligned pixel bounds from two corners, each side at least `MIN_BOX`. */
-export function boxBounds(a: Point, b: Point): { x: number; y: number; w: number; h: number } {
+function aabbFromCorners(
+  a: Point,
+  b: Point,
+  minSide: number,
+): { x: number; y: number; w: number; h: number } {
   let x = Math.min(a.x, b.x);
   let y = Math.min(a.y, b.y);
   let w = Math.abs(b.x - a.x);
   let h = Math.abs(b.y - a.y);
-  if (w < MIN_BOX) {
-    x = (a.x + b.x) / 2 - MIN_BOX / 2;
-    w = MIN_BOX;
+  if (w < minSide) {
+    x = (a.x + b.x) / 2 - minSide / 2;
+    w = minSide;
   }
-  if (h < MIN_BOX) {
-    y = (a.y + b.y) / 2 - MIN_BOX / 2;
-    h = MIN_BOX;
+  if (h < minSide) {
+    y = (a.y + b.y) / 2 - minSide / 2;
+    h = minSide;
   }
   return { x, y, w, h };
+}
+
+/** Axis-aligned pixel bounds from two corners, each side at least `MIN_BOX`. */
+export function boxBounds(a: Point, b: Point): { x: number; y: number; w: number; h: number } {
+  return aabbFromCorners(a, b, MIN_BOX);
+}
+
+/** Clamp wall thickness so a frame of size `w`×`h` keeps an inner opening. */
+export function clampWallThickness(thickness: number, w: number, h: number): number {
+  const maxT = (Math.min(w, h) - FRAME_INNER_GAP) / 2;
+  return Math.min(Math.max(thickness, MIN_WALL_THICKNESS), Math.max(MIN_WALL_THICKNESS, maxT));
+}
+
+/** Axis-aligned frame bounds from two corners; outer size fits `thickness` plus a hole. */
+export function frameBounds(
+  a: Point,
+  b: Point,
+  thickness: number,
+): { x: number; y: number; w: number; h: number; thickness: number } {
+  const requested = Math.max(MIN_WALL_THICKNESS, thickness);
+  const minSide = 2 * requested + FRAME_INNER_GAP;
+  const bounds = aabbFromCorners(a, b, minSide);
+  return { ...bounds, thickness: clampWallThickness(requested, bounds.w, bounds.h) };
 }
 
 /**
@@ -248,6 +289,57 @@ export function createBox(
     shape: new Box(toMeters(w / 2), toMeters(h / 2)),
     ...FIXTURE,
   });
+  return body;
+}
+
+/**
+ * Hollow rectangle of four overlapping wall strips. Opposite corners are `a` and `b` (pixels).
+ * Outer size is at least `2 * thickness + 4` px so the interior stays open.
+ */
+export function createFrame(
+  world: World,
+  a: Point,
+  b: Point,
+  thickness: number = DEFAULT_WALL_THICKNESS,
+  fillStyle: string = randomColor(),
+): Body {
+  const { x, y, w, h, thickness: t } = frameBounds(a, b, thickness);
+  const hw = w / 2;
+  const hh = h / 2;
+  const halfT = t / 2;
+  const body = world.createDynamicBody({
+    position: vecToMeters({ x: x + w / 2, y: y + h / 2 }),
+    linearDamping: LINEAR_DAMPING,
+    angularDamping: ANGULAR_DAMPING,
+    userData: {
+      kind: "shape",
+      label: "Frame Body",
+      fillStyle,
+      outline: [
+        { x: toMeters(-hw), y: toMeters(-hh) },
+        { x: toMeters(hw), y: toMeters(-hh) },
+        { x: toMeters(hw), y: toMeters(hh) },
+        { x: toMeters(-hw), y: toMeters(hh) },
+      ],
+      hole: [
+        { x: toMeters(-hw + t), y: toMeters(-hh + t) },
+        { x: toMeters(hw - t), y: toMeters(-hh + t) },
+        { x: toMeters(hw - t), y: toMeters(hh - t) },
+        { x: toMeters(-hw + t), y: toMeters(hh - t) },
+      ],
+    } satisfies BodyUserData,
+  });
+
+  function wall(hx: number, hy: number, cx: number, cy: number): void {
+    body.createFixture({
+      shape: new Box(toMeters(hx), toMeters(hy), vecToMeters({ x: cx, y: cy })),
+      ...FIXTURE,
+    });
+  }
+  wall(hw, halfT, 0, -hh + halfT);
+  wall(hw, halfT, 0, hh - halfT);
+  wall(halfT, hh, -hw + halfT, 0);
+  wall(halfT, hh, hw - halfT, 0);
   return body;
 }
 
@@ -317,6 +409,16 @@ export function tracePreview(ctx: CanvasRenderingContext2D, preview: ShapePrevie
     ctx.rect(x, y, preview.w ?? 0, preview.h ?? 0);
     return;
   }
+  if (type === "frame") {
+    const w = preview.w ?? 0;
+    const h = preview.h ?? 0;
+    const t = clampWallThickness(preview.thickness ?? DEFAULT_WALL_THICKNESS, w, h);
+    ctx.rect(x, y, w, h);
+    const innerW = w - 2 * t;
+    const innerH = h - 2 * t;
+    if (innerW > 0 && innerH > 0) ctx.rect(x + t, y + t, innerW, innerH);
+    return;
+  }
   const size = preview.size;
   if (type === "circle") {
     ctx.arc(x, y, size, 0, Math.PI * 2);
@@ -334,21 +436,24 @@ export function tracePreview(ctx: CanvasRenderingContext2D, preview: ShapePrevie
   ctx.closePath();
 }
 
-/** Uniform scale about the body origin. Recreates fixtures; Planck has no Body.scale. */
-export function scaleBody(body: Body, factor: number): void {
-  if (Math.abs(factor - 1) < 1e-4) return;
+type FixtureLike = NonNullable<ReturnType<Body["getFixtureList"]>>;
 
-  const fixtures: FixtureLike[] = [];
-  for (let f = body.getFixtureList(); f; f = f.getNext()) fixtures.push(f);
+type FixtureSpec = {
+  shape: Circle | Polygon;
+  density: number;
+  friction: number;
+  restitution: number;
+};
 
-  const rebuilt: { shape: Circle | Polygon; density: number; friction: number; restitution: number }[] = [];
-  for (const f of fixtures) {
+function fixtureSpecs(body: Body, factor: number): FixtureSpec[] {
+  const specs: FixtureSpec[] = [];
+  for (let f = body.getFixtureList(); f; f = f.getNext()) {
     const shape = f.getShape();
     const type = shape.getType();
     if (type === "circle") {
       const circle = shape as import("planck").CircleShape;
       const center = circle.getCenter();
-      rebuilt.push({
+      specs.push({
         shape: new Circle({ x: center.x * factor, y: center.y * factor }, circle.getRadius() * factor),
         density: f.getDensity(),
         friction: f.getFriction(),
@@ -357,7 +462,7 @@ export function scaleBody(body: Body, factor: number): void {
     } else if (type === "polygon") {
       const poly = shape as import("planck").PolygonShape;
       const verts = poly.m_vertices.slice(0, poly.m_count).map((v) => ({ x: v.x * factor, y: v.y * factor }));
-      rebuilt.push({
+      specs.push({
         shape: new Polygon(verts),
         density: f.getDensity(),
         friction: f.getFriction(),
@@ -365,9 +470,11 @@ export function scaleBody(body: Body, factor: number): void {
       });
     }
   }
+  return specs;
+}
 
-  for (const f of fixtures) body.destroyFixture(f);
-  for (const spec of rebuilt) {
+function applyFixtureSpecs(body: Body, specs: FixtureSpec[]): void {
+  for (const spec of specs) {
     body.createFixture({
       shape: spec.shape,
       density: spec.density,
@@ -375,13 +482,65 @@ export function scaleBody(body: Body, factor: number): void {
       restitution: spec.restitution,
     });
   }
+}
+
+/** Uniform scale about the body origin. Recreates fixtures; Planck has no Body.scale. */
+export function scaleBody(body: Body, factor: number): void {
+  if (Math.abs(factor - 1) < 1e-4) return;
+
+  const fixtures: FixtureLike[] = [];
+  for (let f = body.getFixtureList(); f; f = f.getNext()) fixtures.push(f);
+
+  const rebuilt = fixtureSpecs(body, factor);
+
+  for (const f of fixtures) body.destroyFixture(f);
+  applyFixtureSpecs(body, rebuilt);
 
   const data = getBodyData(body);
   if (data?.outline) {
     data.outline = data.outline.map((p) => ({ x: p.x * factor, y: p.y * factor }));
   }
+  if (data?.hole) {
+    data.hole = data.hole.map((p) => ({ x: p.x * factor, y: p.y * factor }));
+  }
   body.synchronizeFixtures();
   body.setAwake(true);
 }
 
-type FixtureLike = NonNullable<ReturnType<Body["getFixtureList"]>>;
+/** Deep-copy a pickable body, offset in world space (metres). */
+export function cloneBody(world: World, source: Body, offsetM: Point): Body {
+  const srcData = getBodyData(source);
+  const userData: BodyUserData = srcData
+    ? {
+        kind: srcData.kind,
+        label: srcData.label,
+        fillStyle: srcData.fillStyle,
+        outline: srcData.outline?.map((p) => ({ x: p.x, y: p.y })),
+        hole: srcData.hole?.map((p) => ({ x: p.x, y: p.y })),
+      }
+    : { kind: "shape", label: "Body", fillStyle: DEFAULT_FILL };
+
+  const pos = source.getPosition();
+  const body = world.createBody({
+    type: source.getType(),
+    position: { x: pos.x + offsetM.x, y: pos.y + offsetM.y },
+    angle: source.getAngle(),
+    linearDamping: LINEAR_DAMPING,
+    angularDamping: ANGULAR_DAMPING,
+    userData,
+  });
+
+  applyFixtureSpecs(body, fixtureSpecs(source, 1));
+
+  if (source.getType() === "dynamic") {
+    const massData = { mass: 0, center: { x: 0, y: 0 }, I: 0 };
+    source.getMassData(massData);
+    body.setMassData(massData);
+  }
+
+  body.setLinearVelocity(source.getLinearVelocity());
+  body.setAngularVelocity(source.getAngularVelocity());
+  body.synchronizeFixtures();
+  body.setAwake(true);
+  return body;
+}

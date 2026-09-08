@@ -189,14 +189,22 @@ export function createPhysics(container: HTMLElement): Physics {
 
     if (data.outline && data.outline.length >= 3) {
       ctx.beginPath();
-      const first = body.getWorldPoint(data.outline[0]);
-      ctx.moveTo(toPixels(first.x), toPixels(first.y));
-      for (let i = 1; i < data.outline.length; i++) {
-        const p = body.getWorldPoint(data.outline[i]);
-        ctx.lineTo(toPixels(p.x), toPixels(p.y));
+      function traceRing(ring: Point[]): void {
+        const first = body.getWorldPoint(ring[0]);
+        ctx.moveTo(toPixels(first.x), toPixels(first.y));
+        for (let i = 1; i < ring.length; i++) {
+          const p = body.getWorldPoint(ring[i]);
+          ctx.lineTo(toPixels(p.x), toPixels(p.y));
+        }
+        ctx.closePath();
       }
-      ctx.closePath();
-      ctx.fill();
+      traceRing(data.outline);
+      if (data.hole && data.hole.length >= 3) {
+        traceRing(data.hole);
+        ctx.fill("evenodd");
+      } else {
+        ctx.fill();
+      }
       if (strokeShape) ctx.stroke();
       return;
     }
