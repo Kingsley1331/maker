@@ -125,17 +125,36 @@
         </dl>
       </div>
 
+      <div id="motor-info" class="group" hidden>
+        <span class="label">Motor</span>
+        <dl class="info">
+          <dt>Joint</dt>
+          <dd id="motor-kind"></dd>
+        </dl>
+        <label class="slider" for="motor-speed">
+          <span class="label">Speed <output id="motor-speed-value">0.00</output></span>
+          <input id="motor-speed" type="range" min="-10" max="10" step="0.25" value="0" />
+        </label>
+        <label class="slider" id="motor-range-row" for="motor-range">
+          <span class="label">Range <output id="motor-range-value">360°</output></span>
+          <input id="motor-range" type="range" min="0" max="360" step="5" value="360" />
+        </label>
+      </div>
+
       <p class="hint">
         Click empty space to spawn a shape, or drag to set its size. With the polygon tool, click
         to add points and double-click to finish (at least 3 points). Drag and release a shape to
         throw it. While paused, press a shape to select it and drag to move it; drag the corner
-        handles to resize and the top knob to rotate (hold Shift to snap). Click empty space or
-        press Escape to deselect. Pause and pick a joint tool to connect bodies: pin attaches a
+        handles to resize and the top knob to rotate (hold Shift to snap). Shapes connected by
+        joints select as a group; click a shape in the group to edit it alone, click it again to
+        reselect the group. Click empty space or press Escape to deselect. Pause and pick a joint
+        tool to connect bodies: pin attaches a
         body to the world at the click; revolute, rod, weld, and wheel take two clicks on
         different bodies. A weld is a rod that does not allow rotation at the ends. A wheel
         attaches a spinning hub (second click) to a chassis (first click) with suspension
         along the line between clicks. Escape or a click on empty space cancels a pending
-        second click.
+        second click. Pause and click a pin, revolute, or wheel to set its motor and, for pin or
+        revolute, how far it can turn.
       </p>
       </div>
 

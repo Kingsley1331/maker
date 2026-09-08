@@ -1,10 +1,117 @@
 import { DistanceJoint, RevoluteJoint, WeldJoint, WheelJoint, type Body, type Joint, type World } from "planck";
 import type { JointUserData } from "./shapes";
-import { vecToMeters, type Point } from "./units";
+import { toPixels, vecToMeters, vecToPixels, type Point } from "./units";
 
 export type JointType = "pin" | "revolute" | "rod" | "weld" | "wheel";
+export type MotorJointType = "pin" | "revolute" | "wheel";
 
 export const JOINT_TYPES: JointType[] = ["pin", "revolute", "rod", "weld", "wheel"];
+
+/** Click radius around a drawn motor pivot, in pixels. */
+export const MOTOR_JOINT_HIT_PX = 10;
+
+export function isMotorJoint(kind: string): kind is MotorJointType {
+  return kind === "pin" || kind === "revolute" || kind === "wheel";
+}
+
+export function motorJointLabel(kind: MotorJointType): string {
+  if (kind === "pin") return "Pin";
+  if (kind === "wheel") return "Wheel";
+  return "Revolute";
+}
+
+function asMotorJoint(joint: Joint): RevoluteJoint | WheelJoint | null {
+  const type = joint.getType();
+  if (type === RevoluteJoint.TYPE || type === WheelJoint.TYPE) {
+    return joint as RevoluteJoint | WheelJoint;
+  }
+  return null;
+}
+
+/** Drawn pivot of a pin / revolute / wheel, in pixels. */
+export function jointPivotPx(joint: Joint): Point | null {
+  const data = joint.getUserData() as JointUserData | undefined;
+  if (!data || !isMotorJoint(data.kind)) return null;
+  if (data.kind === "wheel" && data.localB) {
+    return vecToPixels(joint.getBodyB().getWorldPoint(data.localB));
+  }
+  const b = joint.getAnchorB();
+  return { x: toPixels(b.x), y: toPixels(b.y) };
+}
+
+/** Current motor speed in rad/s, or 0 if the motor is off. */
+export function getMotorSpeed(joint: Joint): number {
+  const motor = asMotorJoint(joint);
+  if (!motor || !motor.isMotorEnabled()) return 0;
+  return motor.getMotorSpeed();
+}
+
+/**
+ * Drive a pin / revolute / wheel. Speed 0 turns the motor off; otherwise the joint
+ * spins at that angular velocity (negative reverses).
+ */
+export function setJointMotor(joint: Joint, speed: number): void {
+  const motor = asMotorJoint(joint);
+  if (!motor) return;
+  if (speed === 0) {
+    motor.enableMotor(false);
+    motor.setMotorSpeed(0);
+    return;
+  }
+  const mass = joint.getBodyA().getMass() + joint.getBodyB().getMass();
+  motor.setMaxMotorTorque(1000 * mass);
+  motor.setMotorSpeed(speed);
+  motor.enableMotor(true);
+}
+
+/** Full rotation; the slider value that means "no limit". */
+export const FULL_RANGE_DEG = 360;
+
+/** Only revolute-type joints (pin, revolute) can have their angular travel limited. */
+export function hasAngleLimit(joint: Joint): joint is RevoluteJoint {
+  const data = joint.getUserData() as JointUserData | undefined;
+  if (data?.kind === "pin" || data?.kind === "revolute") return true;
+  return joint.getType() === RevoluteJoint.TYPE;
+}
+
+/** Allowed angular range in degrees, or 360 when the limit is off. */
+export function getAngleRangeDeg(joint: Joint): number {
+  if (!hasAngleLimit(joint) || !joint.isLimitEnabled()) return FULL_RANGE_DEG;
+  const span = joint.getUpperLimit() - joint.getLowerLimit();
+  return Math.round((span * 180) / Math.PI);
+}
+
+/**
+ * Limit how far the joint can turn, centred on its current pose. 360 (or more) removes the
+ * limit; 0 locks the joint at its current angle.
+ */
+export function setAngleRange(joint: Joint, degrees: number): void {
+  if (!hasAngleLimit(joint)) return;
+  if (degrees >= FULL_RANGE_DEG) {
+    joint.enableLimit(false);
+    return;
+  }
+  const half = ((Math.max(0, degrees) * Math.PI) / 180) / 2;
+  const angle = joint.getJointAngle();
+  joint.setLimits(angle - half, angle + half);
+  joint.enableLimit(true);
+}
+
+/**
+ * World-space sweep (radians, canvas orientation) that body B's centre can travel around the
+ * pivot, or null when the limit is off. Used to draw the allowed arc.
+ */
+export function getAngleLimitArc(joint: Joint): { start: number; end: number } | null {
+  if (!hasAngleLimit(joint) || !joint.isLimitEnabled()) return null;
+  const pivot = joint.getAnchorB();
+  const centre = joint.getBodyB().getWorldCenter();
+  const dir = Math.atan2(centre.y - pivot.y, centre.x - pivot.x);
+  const angle = joint.getJointAngle();
+  return {
+    start: dir + (joint.getLowerLimit() - angle),
+    end: dir + (joint.getUpperLimit() - angle),
+  };
+}
 
 /** Pin a body to the world at `world` (pixels). The body can still rotate around that point. */
 export function createPin(world: World, ground: Body, body: Body, worldPt: Point): Joint | null {

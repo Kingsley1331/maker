@@ -1,5 +1,6 @@
 import { createPhysics } from "./physics";
 import { setupInput } from "./input";
+import { setAngleRange, setJointMotor } from "./joints";
 import { setupUi } from "./ui";
 
 const scene = document.getElementById("scene");
@@ -8,6 +9,8 @@ if (!scene) {
 }
 
 const physics = createPhysics(scene);
+// Start paused so the scene can be built (select, move, joint) before anything falls.
+physics.pause();
 
 const ui = setupUi({
   onGravityChange: (x, y) => physics.setGravity(x, y),
@@ -22,6 +25,14 @@ const ui = setupUi({
     }
     ui.setPaused(physics.isPaused());
   },
+  onMotorSpeedChange: (speed) => {
+    const joint = input.selection.selectedJoint;
+    if (joint) setJointMotor(joint, speed);
+  },
+  onMotorRangeChange: (degrees) => {
+    const joint = input.selection.selectedJoint;
+    if (joint) setAngleRange(joint, degrees);
+  },
 });
 
 const input = setupInput({
@@ -31,9 +42,14 @@ const input = setupInput({
   getSize: () => physics.getSize(),
   isPaused: () => physics.isPaused(),
   getActiveTool: () => ui.getActiveTool(),
-  onSelectionUpdate: (body) => ui.showSelectionInfo(body),
+  onSelectionUpdate: (body, members) => ui.showSelectionInfo(body, members),
+  onJointSelectionUpdate: (joint) => {
+    physics.setSelectedJoint(joint);
+    ui.showMotorInfo(joint);
+  },
   onAfterRender: (cb) => physics.onAfterRender(cb),
   bodyAt: (point) => physics.bodyAt(point),
+  jointAt: (point) => physics.jointAt(point),
 });
 
 ui.setPaused(physics.isPaused());

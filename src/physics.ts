@@ -8,6 +8,7 @@ import {
   type Vec2Value,
   World,
 } from "planck";
+import { getAngleLimitArc, jointPivotPx, MOTOR_JOINT_HIT_PX } from "./joints";
 import { FIXTURE, getBodyData, isPickable, type BodyUserData, type JointUserData } from "./shapes";
 import { GRAVITY_SCALE, toPixels, vecToMeters, vecToPixels, type Point } from "./units";
 
@@ -37,6 +38,10 @@ export interface Physics {
   isPaused(): boolean;
   onAfterRender(cb: AfterRender): void;
   bodyAt(point: Point): Body | null;
+  /** Nearest pin / revolute / wheel whose drawn pivot is within ~10 px. */
+  jointAt(point: Point): Joint | null;
+  /** Highlight this motor joint's pivot (or none). */
+  setSelectedJoint(joint: Joint | null): void;
 }
 
 function sceneSize(container: HTMLElement): { w: number; h: number } {
@@ -86,6 +91,7 @@ export function createPhysics(container: HTMLElement): Physics {
   let paused = false;
   let size = { w: 1, h: 1 };
   const afterRender: AfterRender[] = [];
+  let selectedJoint: Joint | null = null;
 
   function buildWalls(w: number, h: number): void {
     for (const wall of walls) world.destroyBody(wall);
@@ -214,6 +220,23 @@ export function createPhysics(container: HTMLElement): Physics {
       ctx.arc(bx, by, 3.5, 0, Math.PI * 2);
       ctx.fill();
     }
+    if (joint === selectedJoint) {
+      const pivot = jointPivotPx(joint);
+      if (pivot) {
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(pivot.x, pivot.y, 9, 0, Math.PI * 2);
+        ctx.stroke();
+        // Allowed sweep of the angle limit, drawn just outside the selection ring.
+        const arc = getAngleLimitArc(joint);
+        if (arc) {
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(pivot.x, pivot.y, 14, arc.start, arc.end);
+          ctx.stroke();
+        }
+      }
+    }
     ctx.restore();
   }
 
@@ -260,6 +283,22 @@ export function createPhysics(container: HTMLElement): Physics {
     return null;
   }
 
+  function jointAt(point: Point): Joint | null {
+    let best: Joint | null = null;
+    let bestDist = MOTOR_JOINT_HIT_PX;
+    for (let joint: Joint | null = world.getJointList(); joint; joint = joint.getNext() as Joint | null) {
+      if (joint.getType() === MouseJoint.TYPE) continue;
+      const pivot = jointPivotPx(joint);
+      if (!pivot) continue;
+      const dist = Math.hypot(point.x - pivot.x, point.y - pivot.y);
+      if (dist <= bestDist) {
+        best = joint;
+        bestDist = dist;
+      }
+    }
+    return best;
+  }
+
   new ResizeObserver(resize).observe(container);
   window.addEventListener("resize", resize);
   resize();
@@ -293,5 +332,9 @@ export function createPhysics(container: HTMLElement): Physics {
       afterRender.push(cb);
     },
     bodyAt,
+    jointAt,
+    setSelectedJoint(joint: Joint | null): void {
+      selectedJoint = joint;
+    },
   };
 }

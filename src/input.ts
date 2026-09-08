@@ -1,4 +1,4 @@
-import { MouseJoint, type Body, type World } from "planck";
+import { MouseJoint, type Body, type Joint, type World } from "planck";
 import { createPin, createRevolute, createRod, createWeld, createWheel, type JointType } from "./joints";
 import type { AfterRender } from "./physics";
 import { createSelection, type Selection } from "./selection";
@@ -27,9 +27,11 @@ export interface InputOptions {
   getSize(): { w: number; h: number };
   isPaused(): boolean;
   getActiveTool(): ActiveTool;
-  onSelectionUpdate(body: Body | null): void;
+  onSelectionUpdate(body: Body | null, members: Body[]): void;
+  onJointSelectionUpdate(joint: Joint | null): void;
   onAfterRender(cb: AfterRender): void;
   bodyAt(point: Point): Body | null;
+  jointAt(point: Point): Joint | null;
 }
 
 export interface Input {
@@ -48,14 +50,17 @@ export function setupInput({
   isPaused,
   getActiveTool,
   onSelectionUpdate,
+  onJointSelectionUpdate,
   onAfterRender,
   bodyAt,
+  jointAt,
 }: InputOptions): Input {
   const selection = createSelection({
     canvas,
     getSize,
     isPaused,
     onSelectionUpdate,
+    onJointSelectionUpdate,
     onAfterRender,
   });
 
@@ -111,6 +116,10 @@ export function setupInput({
 
   function isTwoClickJoint(type: JointType): boolean {
     return type === "revolute" || type === "rod" || type === "weld" || type === "wheel";
+  }
+
+  function hasSelection(): boolean {
+    return selection.selected !== null || selection.selectedJoint !== null;
   }
 
   function applyCursor(): void {
@@ -239,13 +248,28 @@ export function setupInput({
     const p = canvasPoint(event);
     pressPoint = p;
 
+    // Pause-click a pin / revolute / wheel pivot to select it for the motor sliders. This wins
+    // over joint placement (so you can click a pin you just made) unless a two-click joint is
+    // waiting for its second body, or a polygon is mid-draw.
+    if (isPaused() && jointAnchor === null && !(isPolygonTool() && draft.length > 0)) {
+      const hitJoint = jointAt(p);
+      if (hitJoint) {
+        selection.selectJoint(hitJoint);
+        clickOnlyDeselects = true;
+        setGrabEnabled(false);
+        window.addEventListener("mousemove", onMove);
+        window.addEventListener("mouseup", onUp);
+        return;
+      }
+    }
+
     const type = jointType();
     if (type) {
       pressedBody = bodyAt(p);
       if (isPaused()) {
         // Joint placement instead of select / move / spawn.
         if (!pressedBody) {
-          clickOnlyDeselects = selection.selected !== null || jointAnchor !== null;
+          clickOnlyDeselects = hasSelection() || jointAnchor !== null;
           selection.deselect();
         }
         setGrabEnabled(false);
@@ -275,7 +299,7 @@ export function setupInput({
     if (!pressedBody) {
       // Any press on empty space clears the selection. A plain click then only deselects, but a
       // drag still sizes and spawns a new shape (primitives only).
-      clickOnlyDeselects = selection.selected !== null;
+      clickOnlyDeselects = hasSelection();
       selection.deselect();
       if (!isPolygonTool()) spawnStart = p;
       setGrabEnabled(false);
@@ -320,8 +344,13 @@ export function setupInput({
 
     if (moveOffset && pressedBody) {
       // Velocity is left untouched (freeze-frame edit): the shape resumes its prior motion on Play.
-      pressedBody.setPosition(vecToMeters({ x: p.x + moveOffset.x, y: p.y + moveOffset.y }));
-      pressedBody.synchronizeFixtures();
+      // Everything selected (the shape, or its whole jointed group) moves by the same delta.
+      const pos = pressedBody.getPosition();
+      const delta = {
+        x: p.x + moveOffset.x - toPixels(pos.x),
+        y: p.y + moveOffset.y - toPixels(pos.y),
+      };
+      selection.translate(delta);
       return;
     }
 

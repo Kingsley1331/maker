@@ -141,6 +141,10 @@ body {
   gap: 4px;
 }
 
+.slider[hidden] {
+  display: none;
+}
+
 .slider input[type="range"] {
   width: 100%;
   accent-color: #3b6fe0;

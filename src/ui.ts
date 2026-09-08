@@ -1,7 +1,16 @@
-import type { Body } from "planck";
-import { JOINT_TYPES, type JointType } from "./joints";
+import type { Body, Joint } from "planck";
+import {
+  getAngleRangeDeg,
+  getMotorSpeed,
+  hasAngleLimit,
+  isMotorJoint,
+  JOINT_TYPES,
+  motorJointLabel,
+  type JointType,
+} from "./joints";
+import { bodyLabel, groupBoundsPx, groupMass } from "./group";
 import { bodyBoundsPx } from "./physics";
-import { getBodyData, SHAPE_TYPES, type ShapeType } from "./shapes";
+import { SHAPE_TYPES, type JointUserData, type ShapeType } from "./shapes";
 
 export type ActiveTool =
   | { kind: "shape"; shape: ShapeType }
@@ -12,13 +21,22 @@ export interface UiOptions {
   onBackgroundChange(color: string): void;
   /** Called with the requested state when the user toggles Pause/Play (button or Space). */
   onPauseToggle(paused: boolean): void;
+  /** Called when the motor speed slider moves while a joint is selected. */
+  onMotorSpeedChange(speed: number): void;
+  /** Called when the angular range slider moves while a pin / revolute is selected (degrees). */
+  onMotorRangeChange(degrees: number): void;
 }
 
 export interface Ui {
   getSelectedShape(): ShapeType;
   getActiveTool(): ActiveTool;
-  /** Show (or hide, when null) the readout for the currently selected body. */
-  showSelectionInfo(body: Body | null): void;
+  /**
+   * Show (or hide, when null) the readout for the current selection. `members` is every selected
+   * shape; more than one means a jointed group.
+   */
+  showSelectionInfo(body: Body | null, members?: readonly Body[]): void;
+  /** Show (or hide, when null) the motor slider for the currently selected joint. */
+  showMotorInfo(joint: Joint | null): void;
   /** Reflect the current paused state on the toggle button. */
   setPaused(paused: boolean): void;
 }
@@ -39,7 +57,13 @@ function requireElement<T extends HTMLElement>(id: string): T {
   return el as T;
 }
 
-export function setupUi({ onGravityChange, onBackgroundChange, onPauseToggle }: UiOptions): Ui {
+export function setupUi({
+  onGravityChange,
+  onBackgroundChange,
+  onPauseToggle,
+  onMotorSpeedChange,
+  onMotorRangeChange,
+}: UiOptions): Ui {
   let selectedShape: ShapeType = "circle";
   let activeTool: ActiveTool = { kind: "shape", shape: selectedShape };
 
@@ -136,27 +160,77 @@ export function setupUi({ onGravityChange, onBackgroundChange, onPauseToggle }: 
   const selectionMass = requireElement<HTMLElement>("selection-mass");
   const selectionAngle = requireElement<HTMLElement>("selection-angle");
 
-  function showSelectionInfo(body: Body | null): void {
-    if (!body) {
+  function showSelectionInfo(body: Body | null, members: readonly Body[] = body ? [body] : []): void {
+    if (!body || members.length === 0) {
       selectionInfo.hidden = true;
       return;
     }
-    const { min, max } = bodyBoundsPx(body);
+    const isGroup = members.length > 1;
+    const { min, max } = isGroup ? groupBoundsPx([...members]) : bodyBoundsPx(body);
     const width = max.x - min.x;
     const height = max.y - min.y;
-    const data = getBodyData(body);
     selectionInfo.hidden = false;
-    selectionShape.textContent = (data?.label ?? "Body").replace(/ Body$/, "");
+    selectionShape.textContent = isGroup ? `Group (${members.length} shapes)` : bodyLabel(body);
     selectionSize.textContent = `${Math.round(width)} x ${Math.round(height)} px`;
-    selectionMass.textContent = body.getMass().toFixed(2);
+    selectionMass.textContent = (isGroup ? groupMass([...members]) : body.getMass()).toFixed(2);
     const degrees = (((body.getAngle() * 180) / Math.PI) % 360 + 360) % 360;
     selectionAngle.textContent = `${Math.round(degrees)}\u00B0`;
   }
+
+  // Selected joint motor
+  const motorInfo = requireElement<HTMLDivElement>("motor-info");
+  const motorKind = requireElement<HTMLElement>("motor-kind");
+  const motorSpeed = requireElement<HTMLInputElement>("motor-speed");
+  const motorSpeedValue = requireElement<HTMLOutputElement>("motor-speed-value");
+  const motorRangeRow = requireElement<HTMLLabelElement>("motor-range-row");
+  const motorRange = requireElement<HTMLInputElement>("motor-range");
+  const motorRangeValue = requireElement<HTMLOutputElement>("motor-range-value");
+
+  function showMotorSpeed(speed: number): void {
+    motorSpeed.value = String(speed);
+    motorSpeedValue.textContent = speed.toFixed(2);
+  }
+
+  function showMotorRange(degrees: number): void {
+    motorRange.value = String(degrees);
+    motorRangeValue.textContent = `${Math.round(degrees)}\u00B0`;
+  }
+
+  function showMotorInfo(joint: Joint | null): void {
+    if (!joint) {
+      motorInfo.hidden = true;
+      return;
+    }
+    const data = joint.getUserData() as JointUserData | undefined;
+    if (!data || !isMotorJoint(data.kind)) {
+      motorInfo.hidden = true;
+      return;
+    }
+    motorInfo.hidden = false;
+    motorKind.textContent = motorJointLabel(data.kind);
+    showMotorSpeed(getMotorSpeed(joint));
+    // Wheels cannot be angle-limited in Planck, so only pin / revolute get the Range row.
+    motorRangeRow.hidden = !hasAngleLimit(joint);
+    showMotorRange(getAngleRangeDeg(joint));
+  }
+
+  motorSpeed.addEventListener("input", () => {
+    const speed = parseFloat(motorSpeed.value);
+    showMotorSpeed(speed);
+    onMotorSpeedChange(speed);
+  });
+
+  motorRange.addEventListener("input", () => {
+    const degrees = parseFloat(motorRange.value);
+    showMotorRange(degrees);
+    onMotorRangeChange(degrees);
+  });
 
   return {
     getSelectedShape: () => selectedShape,
     getActiveTool: () => activeTool,
     showSelectionInfo,
+    showMotorInfo,
     setPaused,
   };
 }
