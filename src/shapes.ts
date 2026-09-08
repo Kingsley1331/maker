@@ -14,7 +14,7 @@ import {
 Settings.maxPolygonVertices = 16;
 
 export type PrimitiveShape = "circle" | "rectangle" | "triangle" | "pentagon" | "hexagon";
-export type ShapeType = PrimitiveShape | "polygon";
+export type ShapeType = PrimitiveShape | "polygon" | "box";
 
 export const PRIMITIVE_SHAPES: PrimitiveShape[] = [
   "circle",
@@ -24,20 +24,10 @@ export const PRIMITIVE_SHAPES: PrimitiveShape[] = [
   "hexagon",
 ];
 
-export const SHAPE_TYPES: ShapeType[] = [...PRIMITIVE_SHAPES, "polygon"];
+export const SHAPE_TYPES: ShapeType[] = [...PRIMITIVE_SHAPES, "box", "polygon"];
 
-const PALETTE = [
-  "#f94144",
-  "#f3722c",
-  "#f8961e",
-  "#f9c74f",
-  "#90be6d",
-  "#43aa8b",
-  "#4d908e",
-  "#577590",
-  "#277da1",
-  "#b56576",
-];
+/** Pale blue-leaning duck egg; used for newly spawned shapes. */
+export const DEFAULT_FILL = "#b8d8e4";
 
 export const DEFAULT_SIZE = 28;
 
@@ -54,11 +44,15 @@ export interface BodyUserData {
 }
 
 export interface ShapePreview {
-  type: PrimitiveShape;
+  type: PrimitiveShape | "box";
   x: number;
   y: number;
-  size: number;
   fillStyle: string;
+  /** Nominal radius in px; unused when `type` is `"box"`. */
+  size: number;
+  /** Top-left width/height in px when `type` is `"box"`. */
+  w?: number;
+  h?: number;
 }
 
 export interface JointUserData {
@@ -75,7 +69,7 @@ export const FIXTURE = {
 };
 
 export function randomColor(): string {
-  return PALETTE[Math.floor(Math.random() * PALETTE.length)];
+  return DEFAULT_FILL;
 }
 
 export function getBodyData(body: Body): BodyUserData | undefined {
@@ -209,6 +203,54 @@ export function createBody(
   return body;
 }
 
+/** Smallest side length a dragged box can have (px). Matches the radial-spawn minimum. */
+const MIN_BOX = 8;
+
+/** Axis-aligned pixel bounds from two corners, each side at least `MIN_BOX`. */
+export function boxBounds(a: Point, b: Point): { x: number; y: number; w: number; h: number } {
+  let x = Math.min(a.x, b.x);
+  let y = Math.min(a.y, b.y);
+  let w = Math.abs(b.x - a.x);
+  let h = Math.abs(b.y - a.y);
+  if (w < MIN_BOX) {
+    x = (a.x + b.x) / 2 - MIN_BOX / 2;
+    w = MIN_BOX;
+  }
+  if (h < MIN_BOX) {
+    y = (a.y + b.y) / 2 - MIN_BOX / 2;
+    h = MIN_BOX;
+  }
+  return { x, y, w, h };
+}
+
+/**
+ * Axis-aligned rectangle whose opposite corners are `a` and `b` (pixels).
+ * Each side is clamped to at least 8 px. The body is centred on the rectangle.
+ */
+export function createBox(
+  world: World,
+  a: Point,
+  b: Point,
+  fillStyle: string = randomColor(),
+): Body {
+  const { x, y, w, h } = boxBounds(a, b);
+  const body = world.createDynamicBody({
+    position: vecToMeters({ x: x + w / 2, y: y + h / 2 }),
+    linearDamping: LINEAR_DAMPING,
+    angularDamping: ANGULAR_DAMPING,
+    userData: {
+      kind: "shape",
+      label: "Rectangle Body",
+      fillStyle,
+    } satisfies BodyUserData,
+  });
+  body.createFixture({
+    shape: new Box(toMeters(w / 2), toMeters(h / 2)),
+    ...FIXTURE,
+  });
+  return body;
+}
+
 /**
  * Create a rigid body from user-drawn vertices (pixels). Returns null if a body cannot be formed
  * (degenerate or empty decomposition). The body is placed on the drawn centroid.
@@ -269,8 +311,13 @@ export function createPolygon(world: World, points: Point[]): Body | null {
 
 /** Trace a primitive (pixel space) for ghost previews. */
 export function tracePreview(ctx: CanvasRenderingContext2D, preview: ShapePreview): void {
-  const { type, x, y, size } = preview;
+  const { type, x, y } = preview;
   ctx.beginPath();
+  if (type === "box") {
+    ctx.rect(x, y, preview.w ?? 0, preview.h ?? 0);
+    return;
+  }
+  const size = preview.size;
   if (type === "circle") {
     ctx.arc(x, y, size, 0, Math.PI * 2);
     return;

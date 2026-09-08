@@ -9,13 +9,14 @@ import {
   type JointType,
 } from "./joints";
 import { bodyLabel, groupBoundsPx } from "./group";
-import { bodyBoundsPx } from "./physics";
+import { bodyBoundsPx, MAX_ZOOM, MIN_ZOOM } from "./physics";
 import { getBodyData, SHAPE_TYPES, type JointUserData, type ShapeType } from "./shapes";
 import { toPixels } from "./units";
 
 export type ActiveTool =
   | { kind: "shape"; shape: ShapeType }
-  | { kind: "joint"; joint: JointType };
+  | { kind: "joint"; joint: JointType }
+  | { kind: "zoom" };
 
 export interface UiOptions {
   onGravityChange(x: number, y: number): void;
@@ -34,6 +35,10 @@ export interface UiOptions {
   /** Angular velocity in degrees per second. */
   onSpinChange(degPerSec: number): void;
   onColorChange(color: string): void;
+  /** View zoom. 1 is identity; the slider and keyboard omit a cursor anchor. */
+  onZoomChange(zoom: number): void;
+  /** Fired when the shape, joint, or zoom tool changes. */
+  onToolChange(tool: ActiveTool): void;
 }
 
 export interface Ui {
@@ -48,6 +53,8 @@ export interface Ui {
   showMotorInfo(joint: Joint | null): void;
   /** Reflect the current paused state on the toggle button. */
   setPaused(paused: boolean): void;
+  /** Keep the Zoom slider in sync with wheel / other non-slider changes. */
+  setZoom(zoom: number): void;
 }
 
 function isShapeType(value: string | undefined): value is ShapeType {
@@ -77,6 +84,8 @@ export function setupUi({
   onVelocityChange,
   onSpinChange,
   onColorChange,
+  onZoomChange,
+  onToolChange,
 }: UiOptions): Ui {
   let selectedShape: ShapeType = "circle";
   let activeTool: ActiveTool = { kind: "shape", shape: selectedShape };
@@ -105,17 +114,68 @@ export function setupUi({
     if (event.target === helpDialog) helpDialog.close();
   });
 
+  // Zoom
+  const zoomInput = requireElement<HTMLInputElement>("zoom");
+  const zoomValue = requireElement<HTMLOutputElement>("zoom-value");
+
+  function clampZoom(value: number): number {
+    return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value));
+  }
+
+  function showZoom(value: number): void {
+    const z = clampZoom(value);
+    if (zoomInput.value !== String(z)) zoomInput.value = String(z);
+    zoomValue.textContent = `${Math.round(z * 100)}%`;
+  }
+
+  function nudgeZoom(factor: number): void {
+    const next = clampZoom(parseFloat(zoomInput.value) * factor);
+    showZoom(next);
+    onZoomChange(next);
+  }
+
+  zoomInput.addEventListener("input", () => {
+    if (activeTool.kind !== "zoom") return;
+    const z = parseFloat(zoomInput.value);
+    showZoom(z);
+    onZoomChange(z);
+  });
+  showZoom(1);
+
   window.addEventListener("keydown", (event) => {
-    if (event.code !== "Space" || event.repeat) return;
-    // Space belongs to the modal while it is open (e.g. activating its Close button).
     if (helpDialog.open) return;
-    // Don't hijack Space when a form control has focus (a focused button already clicks on Space).
+    // Don't hijack keys when a form control has focus (a focused button already clicks on Space).
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLButtonElement) return;
-    event.preventDefault();
-    onPauseToggle(!paused);
+
+    if (event.code === "Space") {
+      if (event.repeat) return;
+      event.preventDefault();
+      onPauseToggle(!paused);
+      return;
+    }
+
+    if (event.key === "=" || event.key === "+") {
+      if (activeTool.kind !== "zoom") return;
+      event.preventDefault();
+      nudgeZoom(1.1);
+      return;
+    }
+    if (event.key === "-" || event.key === "_") {
+      if (activeTool.kind !== "zoom") return;
+      event.preventDefault();
+      nudgeZoom(1 / 1.1);
+      return;
+    }
+    if (event.key === "0") {
+      if (activeTool.kind !== "zoom") return;
+      event.preventDefault();
+      showZoom(1);
+      onZoomChange(1);
+    }
   });
 
   // Shape / joint tools (mutually exclusive)
+  const zoomTool = requireElement<HTMLButtonElement>("zoom-tool");
   const shapeButtons = Array.from(
     document.querySelectorAll<HTMLButtonElement>(".shape-btn[data-shape]"),
   );
@@ -123,7 +183,17 @@ export function setupUi({
     document.querySelectorAll<HTMLButtonElement>(".joint-btn[data-joint]"),
   );
 
+  function setActiveTool(tool: ActiveTool): void {
+    activeTool = tool;
+    syncToolButtons();
+    onToolChange(tool);
+  }
+
   function syncToolButtons(): void {
+    const zoomOn = activeTool.kind === "zoom";
+    zoomTool.classList.toggle("is-active", zoomOn);
+    zoomTool.setAttribute("aria-pressed", String(zoomOn));
+    zoomInput.disabled = !zoomOn;
     for (const button of shapeButtons) {
       button.classList.toggle(
         "is-active",
@@ -138,13 +208,14 @@ export function setupUi({
     }
   }
 
+  zoomTool.addEventListener("click", () => setActiveTool({ kind: "zoom" }));
+
   for (const button of shapeButtons) {
     button.addEventListener("click", () => {
       const shape = button.dataset.shape;
       if (!isShapeType(shape)) return;
       selectedShape = shape;
-      activeTool = { kind: "shape", shape };
-      syncToolButtons();
+      setActiveTool({ kind: "shape", shape });
     });
   }
 
@@ -152,8 +223,7 @@ export function setupUi({
     button.addEventListener("click", () => {
       const joint = button.dataset.joint;
       if (!isJointType(joint)) return;
-      activeTool = { kind: "joint", joint };
-      syncToolButtons();
+      setActiveTool({ kind: "joint", joint });
     });
   }
 
@@ -332,5 +402,6 @@ export function setupUi({
     showSelectionInfo,
     showMotorInfo,
     setPaused,
+    setZoom: showZoom,
   };
 }

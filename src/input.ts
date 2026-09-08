@@ -3,7 +3,9 @@ import { createPin, createRevolute, createRod, createWeld, createWheel, type Joi
 import type { AfterRender } from "./physics";
 import { createSelection, type Selection } from "./selection";
 import {
+  boxBounds,
   createBody,
+  createBox,
   createPolygon,
   DEFAULT_SIZE,
   randomColor,
@@ -25,10 +27,15 @@ export interface InputOptions {
   ground: Body;
   canvas: HTMLCanvasElement;
   getSize(): { w: number; h: number };
+  getZoom(): number;
+  setZoom(zoom: number, anchorScreen?: Point): void;
+  screenToWorld(p: Point): Point;
+  panBy(dx: number, dy: number): void;
   isPaused(): boolean;
   getActiveTool(): ActiveTool;
   onSelectionUpdate(body: Body | null, members: Body[]): void;
   onJointSelectionUpdate(joint: Joint | null): void;
+  onZoomChange(zoom: number): void;
   onAfterRender(cb: AfterRender): void;
   bodyAt(point: Point): Body | null;
   jointAt(point: Point): Joint | null;
@@ -47,10 +54,15 @@ export function setupInput({
   ground,
   canvas,
   getSize,
+  getZoom,
+  setZoom,
+  screenToWorld,
+  panBy,
   isPaused,
   getActiveTool,
   onSelectionUpdate,
   onJointSelectionUpdate,
+  onZoomChange,
   onAfterRender,
   bodyAt,
   jointAt,
@@ -58,6 +70,9 @@ export function setupInput({
   const selection = createSelection({
     canvas,
     getSize,
+    getZoom,
+    getActiveTool,
+    screenToWorld,
     isPaused,
     onSelectionUpdate,
     onJointSelectionUpdate,
@@ -89,15 +104,30 @@ export function setupInput({
   let hover: Point | null = null;
   /** First attachment of a two-click joint (revolute / rod / weld / wheel). */
   let jointAnchor: { body: Body; point: Point } | null = null;
+  /** Right / middle mouse camera pan. */
+  let panning = false;
+  let panLast: Point | null = null;
 
-  function canvasPoint(event: MouseEvent): Point {
+  function screenPoint(event: MouseEvent): Point {
     const rect = canvas.getBoundingClientRect();
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+  }
+
+  function canvasPoint(event: MouseEvent): Point {
+    return screenToWorld(screenPoint(event));
+  }
+
+  function clickSlop(): number {
+    return CLICK_THRESHOLD / getZoom();
   }
 
   function maxSize(): number {
     const { w, h } = getSize();
     return Math.min(w, h) * 0.3;
+  }
+
+  function isZoomTool(): boolean {
+    return getActiveTool().kind === "zoom";
   }
 
   function isShapeTool(): boolean {
@@ -107,6 +137,11 @@ export function setupInput({
   function isPolygonTool(): boolean {
     const tool = getActiveTool();
     return tool.kind === "shape" && tool.shape === "polygon";
+  }
+
+  function isBoxTool(): boolean {
+    const tool = getActiveTool();
+    return tool.kind === "shape" && tool.shape === "box";
   }
 
   function jointType(): JointType | null {
@@ -123,9 +158,19 @@ export function setupInput({
   }
 
   function applyCursor(): void {
-    if (moveOffset) canvas.style.cursor = "grabbing";
-    else if (isPolygonTool() || (jointType() && isPaused())) canvas.style.cursor = "crosshair";
+    if (panning || moveOffset) canvas.style.cursor = "grabbing";
+    else if (isZoomTool()) canvas.style.cursor = "grab";
+    else if (isPolygonTool() || isBoxTool() || (jointType() && isPaused())) canvas.style.cursor = "crosshair";
     else canvas.style.cursor = "";
+  }
+
+  function startPan(event: MouseEvent): void {
+    event.preventDefault();
+    panning = true;
+    panLast = screenPoint(event);
+    applyCursor();
+    window.addEventListener("mousemove", onPanMove);
+    window.addEventListener("mouseup", onPanUp);
   }
 
   function setGrabEnabled(enabled: boolean): void {
@@ -175,7 +220,7 @@ export function setupInput({
   function rebuildGhost(size: number): void {
     if (!spawnStart) return;
     const tool = getActiveTool();
-    if (tool.kind !== "shape" || tool.shape === "polygon") return;
+    if (tool.kind !== "shape" || tool.shape === "polygon" || tool.shape === "box") return;
     ghostColor ??= randomColor();
     ghost = { type: tool.shape, x: spawnStart.x, y: spawnStart.y, size, fillStyle: ghostColor };
     ghostSize = size;
@@ -195,6 +240,21 @@ export function setupInput({
     applyCursor();
     window.removeEventListener("mousemove", onMove);
     window.removeEventListener("mouseup", onUp);
+  }
+
+  function onPanMove(event: MouseEvent): void {
+    if (!panning || !panLast) return;
+    const p = screenPoint(event);
+    panBy(p.x - panLast.x, p.y - panLast.y);
+    panLast = p;
+  }
+
+  function onPanUp(): void {
+    panning = false;
+    panLast = null;
+    window.removeEventListener("mousemove", onPanMove);
+    window.removeEventListener("mouseup", onPanUp);
+    applyCursor();
   }
 
   function dropDraftIfToolChanged(): void {
@@ -241,6 +301,11 @@ export function setupInput({
   });
 
   canvas.addEventListener("mousedown", (event) => {
+    if (isZoomTool() && (event.button === 0 || event.button === 1 || event.button === 2)) {
+      startPan(event);
+      return;
+    }
+    if (event.button === 1 || event.button === 2) return;
     if (event.button !== 0) return;
     dropDraftIfToolChanged();
     dropJointAnchorIfToolChanged();
@@ -324,7 +389,7 @@ export function setupInput({
     if (draft.length >= 2) {
       const last = draft[draft.length - 1];
       const prev = draft[draft.length - 2];
-      if (Math.hypot(last.x - prev.x, last.y - prev.y) <= CLICK_THRESHOLD) {
+      if (Math.hypot(last.x - prev.x, last.y - prev.y) <= clickSlop()) {
         draft.pop();
       }
     }
@@ -356,9 +421,24 @@ export function setupInput({
 
     if (!spawnStart || isPolygonTool() || !isShapeTool()) return;
     const dist = Math.hypot(p.x - spawnStart.x, p.y - spawnStart.y);
-    if (!dragged && dist <= CLICK_THRESHOLD) return;
+    if (!dragged && dist <= clickSlop()) return;
 
     dragged = true;
+    if (isBoxTool()) {
+      ghostColor ??= randomColor();
+      const bounds = boxBounds(spawnStart, p);
+      ghost = {
+        type: "box",
+        x: bounds.x,
+        y: bounds.y,
+        w: bounds.w,
+        h: bounds.h,
+        size: 0,
+        fillStyle: ghostColor,
+      };
+      return;
+    }
+
     const size = Math.min(Math.max(dist, MIN_SIZE), maxSize());
     if (!ghost || Math.abs(size - ghostSize) > 0.5) {
       rebuildGhost(size);
@@ -368,7 +448,7 @@ export function setupInput({
   function onUp(event: MouseEvent): void {
     if (!pressPoint) return;
     const p = canvasPoint(event);
-    const isClick = Math.hypot(p.x - pressPoint.x, p.y - pressPoint.y) <= CLICK_THRESHOLD;
+    const isClick = Math.hypot(p.x - pressPoint.x, p.y - pressPoint.y) <= clickSlop();
     const type = jointType();
 
     endGrab();
@@ -388,11 +468,21 @@ export function setupInput({
         setGrabEnabled(false);
       }
     } else if (spawnStart) {
-      if (dragged && ghost) {
+      if (isBoxTool()) {
+        if (dragged) {
+          createBox(world, spawnStart, p, ghostColor ?? randomColor());
+        } else if (isClick && !clickOnlyDeselects) {
+          createBox(
+            world,
+            { x: spawnStart.x - DEFAULT_SIZE, y: spawnStart.y - DEFAULT_SIZE },
+            { x: spawnStart.x + DEFAULT_SIZE, y: spawnStart.y + DEFAULT_SIZE },
+          );
+        }
+      } else if (dragged && ghost && ghost.type !== "box") {
         createBody(world, ghost.type, ghost.x, ghost.y, ghost.size, ghost.fillStyle);
       } else if (isClick && !clickOnlyDeselects) {
         const tool = getActiveTool();
-        if (tool.kind === "shape" && tool.shape !== "polygon") {
+        if (tool.kind === "shape" && tool.shape !== "polygon" && tool.shape !== "box") {
           createBody(world, tool.shape, spawnStart.x, spawnStart.y, DEFAULT_SIZE);
         }
       }
@@ -481,6 +571,19 @@ export function setupInput({
 
   // Stop the browser from treating drags as text selection / scroll gestures.
   canvas.style.touchAction = "none";
+  canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+  canvas.addEventListener("auxclick", (event) => event.preventDefault());
+  canvas.addEventListener(
+    "wheel",
+    (event) => {
+      if (!isZoomTool()) return;
+      event.preventDefault();
+      const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1;
+      setZoom(getZoom() * factor, screenPoint(event));
+      onZoomChange(getZoom());
+    },
+    { passive: false },
+  );
   applyCursor();
 
   return { selection };

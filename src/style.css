@@ -96,21 +96,27 @@ body {
 }
 
 .shapes,
-.joints {
+.joints,
+.view {
   display: grid;
   gap: 6px;
 }
 
 .shapes {
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(7, 1fr);
 }
 
 .joints {
   grid-template-columns: repeat(3, 1fr);
 }
 
+.view {
+  grid-template-columns: repeat(7, 1fr);
+}
+
 .shape-btn,
-.joint-btn {
+.joint-btn,
+.view-btn {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -124,19 +130,22 @@ body {
 }
 
 .shape-btn svg,
-.joint-btn svg {
+.joint-btn svg,
+.view-btn svg {
   width: 18px;
   height: 18px;
   display: block;
 }
 
 .shape-btn:hover,
-.joint-btn:hover {
+.joint-btn:hover,
+.view-btn:hover {
   background: #343a45;
 }
 
 .shape-btn.is-active,
 .joint-btn.is-active,
+.view-btn.is-active,
 .segmented button.is-active {
   background: #3b6fe0;
   border-color: #5f8cf0;
@@ -173,9 +182,9 @@ body {
   display: none;
 }
 
-.slider input[type="range"] {
-  width: 100%;
-  accent-color: #3b6fe0;
+.slider input[type="range"]:disabled {
+  opacity: 0.4;
+  pointer-events: none;
 }
 
 .color-row {

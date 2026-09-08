@@ -1,6 +1,7 @@
 import type { Body, Joint } from "planck";
 import { connectedBodies, groupBoundsPx, rotateGroup, scaleGroup, translateGroup } from "./group";
 import { bodyBoundsPx, type AfterRender } from "./physics";
+import type { ActiveTool } from "./ui";
 import { vecToMeters, type Point } from "./units";
 
 const BOX_PADDING = 6;
@@ -29,6 +30,9 @@ type Interaction = "none" | "scale" | "rotate";
 export interface SelectionOptions {
   canvas: HTMLCanvasElement;
   getSize(): { w: number; h: number };
+  getZoom(): number;
+  getActiveTool(): ActiveTool;
+  screenToWorld(p: Point): Point;
   /** Selection and editing are only available while the simulation is paused. */
   isPaused(): boolean;
   /**
@@ -65,6 +69,9 @@ export interface Selection {
 export function createSelection({
   canvas,
   getSize,
+  getZoom,
+  getActiveTool,
+  screenToWorld,
   isPaused,
   onSelectionUpdate,
   onJointSelectionUpdate,
@@ -180,10 +187,12 @@ export function createSelection({
     if (members.length === 0 || !isPaused()) return null;
     for (const handle of handles()) {
       if (handle.kind === "rotate") {
-        if (Math.hypot(point.x - handle.x, point.y - handle.y) <= ROTATE_HIT_RADIUS) return handle;
+        if (Math.hypot(point.x - handle.x, point.y - handle.y) <= ROTATE_HIT_RADIUS / getZoom()) {
+          return handle;
+        }
       } else if (
-        Math.abs(point.x - handle.x) <= HANDLE_HIT_RADIUS &&
-        Math.abs(point.y - handle.y) <= HANDLE_HIT_RADIUS
+        Math.abs(point.x - handle.x) <= HANDLE_HIT_RADIUS / getZoom() &&
+        Math.abs(point.y - handle.y) <= HANDLE_HIT_RADIUS / getZoom()
       ) {
         return handle;
       }
@@ -193,7 +202,7 @@ export function createSelection({
 
   function canvasPoint(event: MouseEvent): Point {
     const rect = canvas.getBoundingClientRect();
-    return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    return screenToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top });
   }
 
   function maxWidth(): number {
@@ -305,6 +314,7 @@ export function createSelection({
     "mousedown",
     (event) => {
       if (event.button !== 0 || members.length === 0) return;
+      if (getActiveTool().kind === "zoom") return;
       const p = canvasPoint(event);
       const handle = hitHandle(p);
       if (!handle) return;
@@ -335,6 +345,7 @@ export function createSelection({
 
   canvas.addEventListener("mousemove", (event) => {
     if (interaction !== "none" || event.buttons !== 0) return;
+    if (getActiveTool().kind === "zoom") return;
     const handle = hitHandle(canvasPoint(event));
     canvas.style.cursor = handle ? handle.cursor : "";
   });

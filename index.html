@@ -42,6 +42,11 @@
               <rect x="4" y="4" width="16" height="16" rx="1" fill="currentColor" />
             </svg>
           </button>
+          <button class="shape-btn" data-shape="box" title="Box (drag corners)" aria-label="Box">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="7" width="18" height="10" rx="1" fill="currentColor" />
+            </svg>
+          </button>
           <button class="shape-btn" data-shape="triangle" title="Triangle" aria-label="Triangle">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <polygon points="12,4 19.0,16 5.0,16" fill="currentColor" />
@@ -105,6 +110,29 @@
             </svg>
           </button>
         </div>
+      </div>
+
+      <div class="group">
+        <span class="label">View</span>
+        <div class="view">
+          <button
+            id="zoom-tool"
+            class="view-btn"
+            type="button"
+            title="Zoom / Pan"
+            aria-label="Zoom / Pan"
+            aria-pressed="false"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="10" cy="10" r="6" fill="none" stroke="currentColor" stroke-width="2" />
+              <line x1="14.5" y1="14.5" x2="20" y2="20" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
+        <label class="slider" for="zoom">
+          <span class="label">Zoom <output id="zoom-value">100%</output></span>
+          <input id="zoom" type="range" min="0.25" max="4" step="0.05" value="1" disabled />
+        </label>
       </div>
 
       <div class="group">
@@ -189,6 +217,10 @@
         <ul class="help-list">
           <li><strong>Spawn:</strong> click empty space to add the selected shape, or drag to set its size.</li>
           <li>
+            <strong>Box tool:</strong> press empty space and drag to the opposite corner; the rectangle
+            is created on release.
+          </li>
+          <li>
             <strong>Polygon tool:</strong> click to add points and double-click to finish (at least 3
             points).
           </li>
@@ -215,6 +247,10 @@
           <li>
             <strong>Motors and limits:</strong> pause and click a pin, revolute, or wheel to set its motor
             speed; pin and revolute can also be limited in how far they turn.
+          </li>
+          <li>
+            <strong>Zoom:</strong> select the Zoom tool in View first. Then the mouse wheel zooms
+            toward the cursor, drag pans the view, and the slider and + / - / 0 work (0 resets to 100%).
           </li>
           <li><strong>Space</strong> toggles Pause / Play.</li>
         </ul>

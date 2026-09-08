@@ -62,6 +62,10 @@ const ui = setupUi({
       if (data) data.fillStyle = color;
     }
   },
+  onZoomChange: (zoom) => physics.setZoom(zoom),
+  onToolChange: (tool) => {
+    if (tool.kind === "zoom") input.selection.deselect();
+  },
 });
 
 const input = setupInput({
@@ -69,6 +73,10 @@ const input = setupInput({
   ground: physics.ground,
   canvas: physics.canvas,
   getSize: () => physics.getSize(),
+  getZoom: () => physics.getZoom(),
+  setZoom: (zoom, anchor) => physics.setZoom(zoom, anchor),
+  screenToWorld: (point) => physics.screenToWorld(point),
+  panBy: (dx, dy) => physics.panBy(dx, dy),
   isPaused: () => physics.isPaused(),
   getActiveTool: () => ui.getActiveTool(),
   onSelectionUpdate: (body, members) => ui.showSelectionInfo(body, members),
@@ -76,6 +84,7 @@ const input = setupInput({
     physics.setSelectedJoint(joint);
     ui.showMotorInfo(joint);
   },
+  onZoomChange: (zoom) => ui.setZoom(zoom),
   onAfterRender: (cb) => physics.onAfterRender(cb),
   bodyAt: (point) => physics.bodyAt(point),
   jointAt: (point) => physics.jointAt(point),

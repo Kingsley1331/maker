@@ -20,6 +20,8 @@ const VELOCITY_ITERATIONS = 8;
 const POSITION_ITERATIONS = 3;
 
 export const DEFAULT_BACKGROUND = "#ffffff";
+export const MIN_ZOOM = 0.25;
+export const MAX_ZOOM = 4;
 
 export type AfterRender = (ctx: CanvasRenderingContext2D) => void;
 
@@ -29,6 +31,16 @@ export interface Physics {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
   getSize(): { w: number; h: number };
+  getZoom(): number;
+  /**
+   * View zoom. Omitting `anchorScreen` zooms about the viewport centre; zoom 1 in that case also
+   * zeros the offset (identity view). With an anchor (wheel), the world point under that screen
+   * pixel stays put.
+   */
+  setZoom(zoom: number, anchorScreen?: Point): void;
+  screenToWorld(p: Point): Point;
+  /** Shift the view by screen-pixel deltas. Does not change zoom. */
+  panBy(dx: number, dy: number): void;
   setGravity(x: number, y: number): void;
   setBackground(color: string): void;
   /** Stop stepping the simulation. Rendering continues. */
@@ -38,7 +50,7 @@ export interface Physics {
   isPaused(): boolean;
   onAfterRender(cb: AfterRender): void;
   bodyAt(point: Point): Body | null;
-  /** Nearest pin / revolute / wheel whose drawn pivot is within ~10 px. */
+  /** Nearest pin / revolute / wheel whose drawn pivot is within ~10 screen px. */
   jointAt(point: Point): Joint | null;
   /** Highlight this motor joint's pivot (or none). */
   setSelectedJoint(joint: Joint | null): void;
@@ -90,8 +102,34 @@ export function createPhysics(container: HTMLElement): Physics {
   let background = DEFAULT_BACKGROUND;
   let paused = false;
   let size = { w: 1, h: 1 };
+  let zoom = 1;
+  let offset = { x: 0, y: 0 };
   const afterRender: AfterRender[] = [];
   let selectedJoint: Joint | null = null;
+
+  function screenToWorld(p: Point): Point {
+    return {
+      x: (p.x - offset.x) / zoom,
+      y: (p.y - offset.y) / zoom,
+    };
+  }
+
+  function setZoom(next: number, anchorScreen?: Point): void {
+    const z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, next));
+    if (z === 1 && anchorScreen === undefined) {
+      zoom = 1;
+      offset = { x: 0, y: 0 };
+      return;
+    }
+    const anchor = anchorScreen ?? { x: size.w / 2, y: size.h / 2 };
+    const world = screenToWorld(anchor);
+    zoom = z;
+    offset = { x: anchor.x - world.x * zoom, y: anchor.y - world.y * zoom };
+  }
+
+  function panBy(dx: number, dy: number): void {
+    offset = { x: offset.x + dx, y: offset.y + dy };
+  }
 
   function buildWalls(w: number, h: number): void {
     for (const wall of walls) world.destroyBody(wall);
@@ -142,6 +180,12 @@ export function createPhysics(container: HTMLElement): Physics {
     const data = getBodyData(body);
     if (!data || data.kind === "ground") return;
     ctx.fillStyle = data.fillStyle;
+    const strokeShape = data.kind === "shape";
+    if (strokeShape) {
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.35)";
+      ctx.lineWidth = 0.5;
+      ctx.lineJoin = "round";
+    }
 
     if (data.outline && data.outline.length >= 3) {
       ctx.beginPath();
@@ -153,6 +197,7 @@ export function createPhysics(container: HTMLElement): Physics {
       }
       ctx.closePath();
       ctx.fill();
+      if (strokeShape) ctx.stroke();
       return;
     }
 
@@ -164,6 +209,7 @@ export function createPhysics(container: HTMLElement): Physics {
         ctx.beginPath();
         ctx.arc(toPixels(c.x), toPixels(c.y), toPixels(circle.getRadius()), 0, Math.PI * 2);
         ctx.fill();
+        if (strokeShape) ctx.stroke();
       } else if (shape.getType() === "polygon") {
         const poly = shape as PolygonShape;
         if (poly.m_count < 3) continue;
@@ -177,6 +223,7 @@ export function createPhysics(container: HTMLElement): Physics {
         }
         ctx.closePath();
         ctx.fill();
+        if (strokeShape) ctx.stroke();
       }
     }
   }
@@ -244,6 +291,10 @@ export function createPhysics(container: HTMLElement): Physics {
     ctx.fillStyle = background;
     ctx.fillRect(0, 0, size.w, size.h);
 
+    ctx.save();
+    ctx.translate(offset.x, offset.y);
+    ctx.scale(zoom, zoom);
+
     for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
       if (getBodyData(body)?.kind === "wall") drawBody(body);
     }
@@ -254,6 +305,7 @@ export function createPhysics(container: HTMLElement): Physics {
       drawJoint(joint);
     }
     for (const cb of afterRender) cb(ctx);
+    ctx.restore();
   }
 
   let last = performance.now();
@@ -285,7 +337,7 @@ export function createPhysics(container: HTMLElement): Physics {
 
   function jointAt(point: Point): Joint | null {
     let best: Joint | null = null;
-    let bestDist = MOTOR_JOINT_HIT_PX;
+    let bestDist = MOTOR_JOINT_HIT_PX / zoom;
     for (let joint: Joint | null = world.getJointList(); joint; joint = joint.getNext() as Joint | null) {
       if (joint.getType() === MouseJoint.TYPE) continue;
       const pivot = jointPivotPx(joint);
@@ -310,6 +362,10 @@ export function createPhysics(container: HTMLElement): Physics {
     canvas,
     ctx,
     getSize: () => size,
+    getZoom: () => zoom,
+    setZoom,
+    screenToWorld,
+    panBy,
     setGravity(x: number, y: number): void {
       world.setGravity({ x: x * GRAVITY_SCALE, y: y * GRAVITY_SCALE });
     },
