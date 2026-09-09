@@ -312,12 +312,12 @@
       </div>
 
       <div id="motor-info" class="group" hidden>
-        <span class="label">Motor</span>
+        <span class="label">Joint</span>
         <dl class="info">
           <dt>Joint</dt>
           <dd id="motor-kind"></dd>
         </dl>
-        <label class="slider" for="motor-speed">
+        <label class="slider" id="motor-speed-row" for="motor-speed">
           <span class="label">Speed <output id="motor-speed-value">0.00</output></span>
           <input id="motor-speed" type="range" min="-10" max="10" step="0.25" value="0" />
         </label>
@@ -522,9 +522,10 @@
           </li>
           <li><strong>Cancel:</strong> Escape or a click on empty space cancels a pending second click.</li>
           <li>
-            <strong>Motors and limits:</strong> placing a pin, revolute, wheel, or slider selects it
-            (or pause and click its drawing). Set motor speed; pin and revolute can limit how far they
-            turn, and sliders can limit travel and whether the two shapes collide.
+            <strong>Motors and limits:</strong> placing a joint selects it (or pause and click its
+            drawing). Drag an end onto a new point on the same body to move it. Delete removes the
+            joint. Set motor speed on pin, revolute, wheel, and slider; pin and revolute can limit how
+            far they turn, and sliders can limit travel and whether the two shapes collide.
           </li>
           <li>
             <strong>Zoom:</strong> select the Zoom tool in View first. Then the mouse wheel zooms

@@ -8,8 +8,8 @@ import {
   hasAngleLimit,
   hasTravelLimit,
   isMotorJoint,
+  jointKindLabel,
   JOINT_TYPES,
-  motorJointLabel,
   type JointType,
 } from "./joints";
 import { bodyLabel, groupBoundsPx } from "./group";
@@ -842,6 +842,7 @@ export function setupUi({
   // Selected joint motor
   const motorInfo = requireElement<HTMLDivElement>("motor-info");
   const motorKind = requireElement<HTMLElement>("motor-kind");
+  const motorSpeedRow = requireElement<HTMLLabelElement>("motor-speed-row");
   const motorSpeed = requireElement<HTMLInputElement>("motor-speed");
   const motorSpeedValue = requireElement<HTMLOutputElement>("motor-speed-value");
   const motorRangeRow = requireElement<HTMLLabelElement>("motor-range-row");
@@ -893,17 +894,18 @@ export function setupUi({
       return;
     }
     const data = joint.getUserData() as JointUserData | undefined;
-    if (!data || !isMotorJoint(data.kind)) {
+    if (!data?.kind) {
       motorInfo.hidden = true;
       return;
     }
     motorInfo.hidden = false;
     motorInfo.scrollIntoView({ block: "nearest" });
-    motorKind.textContent = motorJointLabel(data.kind);
-    showMotorSpeed(getMotorSpeed(joint));
-    // Wheels cannot be limited in Planck; pin / revolute get an angle Range, sliders a Travel.
+    motorKind.textContent = jointKindLabel(data.kind);
+    const motor = isMotorJoint(data.kind);
+    motorSpeedRow.hidden = !motor;
+    if (motor) showMotorSpeed(getMotorSpeed(joint));
     motorRangeRow.hidden = !hasAngleLimit(joint) && !hasTravelLimit(joint);
-    configureRangeRow(joint);
+    if (!motorRangeRow.hidden) configureRangeRow(joint);
     motorCollideRow.hidden = !hasTravelLimit(joint);
     motorCollide.checked = hasTravelLimit(joint) && joint.getCollideConnected();
   }

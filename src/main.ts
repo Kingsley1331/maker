@@ -135,6 +135,8 @@ const input = setupInput({
   onAfterRender: (cb) => physics.onAfterRender(cb),
   bodyAt: (point) => physics.bodyAt(point),
   jointAt: (point) => physics.jointAt(point),
+  jointEndAt: (point) => physics.jointEndAt(point),
+  setHoveredJoint: (joint, end) => physics.setHoveredJoint(joint, end),
   getWrapOffsets: () => physics.getWrapOffsets(),
 });
 

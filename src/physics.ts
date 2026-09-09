@@ -11,7 +11,7 @@ import {
   World,
 } from "planck";
 import { connectedBodies, translateGroup } from "./group";
-import { getAngleLimitArc, getTravelLimitSegment, jointPivotPx, jointSelectDistPx, MOTOR_JOINT_HIT_PX } from "./joints";
+import { getAngleLimitArc, getTravelLimitSegment, jointDrawEndsPx, jointEndHit, jointSelectDistPx, MOTOR_JOINT_HIT_PX, type JointEnd } from "./joints";
 import {
   FIXTURE,
   getBodyData,
@@ -90,10 +90,14 @@ export interface Physics {
   isPaused(): boolean;
   onAfterRender(cb: AfterRender): void;
   bodyAt(point: Point): Body | null;
-  /** Nearest pin / revolute / wheel / slider whose drawn pivot is within ~10 screen px. */
+  /** Nearest scene joint whose drawing is within ~10 screen px. */
   jointAt(point: Point): Joint | null;
-  /** Highlight this motor joint's pivot (or none). */
+  /** Nearest drawn joint end (not the rail) within ~10 screen px. */
+  jointEndAt(point: Point): { joint: Joint; end: JointEnd } | null;
+  /** Highlight this joint (or none). */
   setSelectedJoint(joint: Joint | null): void;
+  /** Pulse this joint end on hover (or none). */
+  setHoveredJoint(joint: Joint | null, end?: JointEnd | null): void;
 }
 
 function sceneSize(container: HTMLElement): { w: number; h: number } {
@@ -125,16 +129,38 @@ export function bodyBoundsPx(body: Body): { min: Point; max: Point } {
   return { min: vecToPixels({ x: minX, y: minY }), max: vecToPixels({ x: maxX, y: maxY }) };
 }
 
-/** Tile offsets for wrap copies: identity, or a 3×3 grid around the canvas. */
-export function wrapOffsets(size: { w: number; h: number }, enabled: boolean): Point[] {
+/**
+ * Tile offsets for wrap copies: identity when off; otherwise a 3×3 grid around the canvas plus,
+ * for every extra tile index in `tiles`, the 3×3 grid that brings that tile onto the canvas.
+ * Groups are wrapped by their centroid, so a member of a stretched group (a slider run far off
+ * its rail) can sit several canvases away; its tile is added here so it still has a visible copy.
+ */
+export function wrapOffsets(
+  size: { w: number; h: number },
+  enabled: boolean,
+  tiles: Point[] = [],
+): Point[] {
   if (!enabled) return [{ x: 0, y: 0 }];
+  const seen = new Set<string>();
   const out: Point[] = [];
-  for (let j = -1; j <= 1; j++) {
-    for (let i = -1; i <= 1; i++) {
-      out.push({ x: i * size.w, y: j * size.h });
+  const add = (ti: number, tj: number): void => {
+    for (let j = tj - 1; j <= tj + 1; j++) {
+      for (let i = ti - 1; i <= ti + 1; i++) {
+        const key = `${i},${j}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ x: i * size.w, y: j * size.h });
+      }
     }
-  }
+  };
+  add(0, 0);
+  for (const t of tiles) add(t.x, t.y);
   return out;
+}
+
+/** Integer tile (multiples of the canvas) whose copy of world-pixel `p` lands on the canvas. */
+function tileFor(p: Point, size: { w: number; h: number }): Point {
+  return { x: -Math.floor(p.x / size.w), y: -Math.floor(p.y / size.h) };
 }
 
 /** Draw `fn` once per wrap offset, translating the context for copies. */
@@ -201,6 +227,8 @@ export function createPhysics(container: HTMLElement): Physics {
   let offset = { x: 0, y: 0 };
   const afterRender: AfterRender[] = [];
   let selectedJoint: Joint | null = null;
+  let hoveredJoint: Joint | null = null;
+  let hoveredEnd: JointEnd | null = null;
 
   function screenToWorld(p: Point): Point {
     return {
@@ -227,7 +255,24 @@ export function createPhysics(container: HTMLElement): Physics {
   }
 
   function currentWrapOffsets(): Point[] {
-    return wrapOffsets(size, wrapEnabled);
+    if (!wrapEnabled) return wrapOffsets(size, false);
+    const tiles: Point[] = [];
+    for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
+      if (!isPickable(body)) continue;
+      const t = tileFor(vecToPixels(body.getPosition()), size);
+      if (t.x !== 0 || t.y !== 0) tiles.push(t);
+    }
+    return wrapOffsets(size, true, tiles);
+  }
+
+  /** Does the world-pixel box, shifted by wrap offset `o`, overlap the visible view? */
+  function copyInView(min: Point, max: Point, o: Point, view: { min: Point; max: Point }): boolean {
+    return (
+      min.x + o.x <= view.max.x &&
+      max.x + o.x >= view.min.x &&
+      min.y + o.y <= view.max.y &&
+      max.y + o.y >= view.min.y
+    );
   }
 
   function wrapBodies(): void {
@@ -249,7 +294,18 @@ export function createPhysics(container: HTMLElement): Physics {
       const n = group.length;
       const dx = wrapDelta(cx / n, spanX);
       const dy = wrapDelta(cy / n, spanY);
-      if (dx !== 0 || dy !== 0) translateGroup(group, { x: dx, y: dy });
+      if (dx === 0 && dy === 0) continue;
+      translateGroup(group, { x: dx, y: dy });
+      // A grab (mouse joint) targets a world point; carry it along or the spring would haul the
+      // group a whole screen back toward the stale target.
+      for (const member of group) {
+        for (let edge = member.getJointList(); edge; edge = edge.next) {
+          const joint = edge.joint;
+          if (!joint || joint.getType() !== MouseJoint.TYPE || joint.getBodyB() !== member) continue;
+          const t = (joint as MouseJoint).getTarget();
+          (joint as MouseJoint).setTarget({ x: t.x + dx, y: t.y + dy });
+        }
+      }
     }
   }
 
@@ -430,36 +486,56 @@ export function createPhysics(container: HTMLElement): Physics {
       ctx.lineTo(x2, y2);
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(x1, y1, 3.5, 0, Math.PI * 2);
       ctx.arc(x2, y2, 3.5, 0, Math.PI * 2);
       ctx.fill();
+      if (data.kind === "wheel") {
+        // Chassis (non-rotating) end: a short tick so it is not confused with the hub.
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const len = Math.hypot(dx, dy);
+        const nx = len > 1e-6 ? -dy / len : 0;
+        const ny = len > 1e-6 ? dx / len : 1;
+        const tick = 5;
+        ctx.beginPath();
+        ctx.moveTo(x1 - nx * tick, y1 - ny * tick);
+        ctx.lineTo(x1 + nx * tick, y1 + ny * tick);
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        ctx.arc(x1, y1, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
     } else {
       ctx.beginPath();
       ctx.arc(bx, by, 3.5, 0, Math.PI * 2);
       ctx.fill();
     }
     if (joint === selectedJoint) {
-      const pivot = jointPivotPx(joint);
-      if (pivot) {
+      const ends = jointDrawEndsPx(joint);
+      if (ends) {
         ctx.lineWidth = 2;
+        const same = Math.hypot(ends.a.x - ends.b.x, ends.a.y - ends.b.y) < 1;
         ctx.beginPath();
-        ctx.arc(pivot.x, pivot.y, 9, 0, Math.PI * 2);
+        ctx.arc(ends.b.x, ends.b.y, 9, 0, Math.PI * 2);
         ctx.stroke();
-        // Allowed sweep of the angle limit, drawn just outside the selection ring.
+        if (!same) {
+          ctx.beginPath();
+          ctx.arc(ends.a.x, ends.a.y, 9, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        const hub = ends.b;
         const arc = getAngleLimitArc(joint);
         if (arc) {
           ctx.lineWidth = 1.5;
           ctx.beginPath();
-          ctx.arc(pivot.x, pivot.y, 14, arc.start, arc.end);
+          ctx.arc(hub.x, hub.y, 14, arc.start, arc.end);
           ctx.stroke();
         }
-        // Allowed travel of a slider's limit: a line along the axis with a tick at each end.
         const travel = getTravelLimitSegment(joint);
         if (travel) {
           const dx = travel.to.x - travel.from.x;
           const dy = travel.to.y - travel.from.y;
           const len = Math.hypot(dx, dy);
-          // Perpendicular for the end ticks; fall back to horizontal when the travel is zero.
           const nx = len > 1e-6 ? -dy / len : 1;
           const ny = len > 1e-6 ? dx / len : 0;
           const tick = 6;
@@ -473,6 +549,20 @@ export function createPhysics(container: HTMLElement): Physics {
           }
           ctx.stroke();
         }
+      }
+    }
+    if (joint === hoveredJoint) {
+      const ends = jointDrawEndsPx(joint);
+      const pulseAt = hoveredEnd === "a" ? ends?.a : ends?.b;
+      if (pulseAt) {
+        const wave = 0.5 + 0.5 * Math.sin((performance.now() / 700) * Math.PI * 2);
+        const radius = joint === selectedJoint ? 12 + 3 * wave : 9 + 2.5 * wave;
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.35 + 0.5 * wave;
+        ctx.beginPath();
+        ctx.arc(pulseAt.x, pulseAt.y, radius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
       }
     }
     ctx.restore();
@@ -491,14 +581,44 @@ export function createPhysics(container: HTMLElement): Physics {
         if (getBodyData(body)?.kind === "wall") drawBody(body);
       }
     }
-    withWrapOffsets(ctx, currentWrapOffsets(), () => {
+    const offsets = currentWrapOffsets();
+    const cull = offsets.length > 1;
+    // Visible region in world pixels; with many wrap tiles only the copies over it are drawn.
+    const view = { min: screenToWorld({ x: 0, y: 0 }), max: screenToWorld({ x: size.w, y: size.h }) };
+    const bodyBounds = new Map<Body, { min: Point; max: Point }>();
+    const jointBounds = new Map<Joint, { min: Point; max: Point }>();
+    if (cull) {
       for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
-        if (getBodyData(body)?.kind !== "wall") drawBody(body);
+        if (getBodyData(body)?.kind !== "wall") bodyBounds.set(body, bodyBoundsPx(body));
       }
       for (let joint: Joint | null = world.getJointList(); joint; joint = joint.getNext() as Joint | null) {
+        // The selected joint also draws its limit arc / travel segment; never cull it.
+        if (joint === selectedJoint) continue;
+        const ends = jointDrawEndsPx(joint);
+        if (!ends) continue;
+        const pad = 24;
+        jointBounds.set(joint, {
+          min: { x: Math.min(ends.a.x, ends.b.x) - pad, y: Math.min(ends.a.y, ends.b.y) - pad },
+          max: { x: Math.max(ends.a.x, ends.b.x) + pad, y: Math.max(ends.a.y, ends.b.y) + pad },
+        });
+      }
+    }
+    for (const o of offsets) {
+      ctx.save();
+      ctx.translate(o.x, o.y);
+      for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
+        if (getBodyData(body)?.kind === "wall") continue;
+        const b = bodyBounds.get(body);
+        if (b && !copyInView(b.min, b.max, o, view)) continue;
+        drawBody(body);
+      }
+      for (let joint: Joint | null = world.getJointList(); joint; joint = joint.getNext() as Joint | null) {
+        const b = jointBounds.get(joint);
+        if (b && !copyInView(b.min, b.max, o, view)) continue;
         drawJoint(joint);
       }
-    });
+      ctx.restore();
+    }
     for (const cb of afterRender) cb(ctx);
     ctx.restore();
   }
@@ -573,7 +693,10 @@ export function createPhysics(container: HTMLElement): Physics {
     return edgeHit;
   }
 
-  function jointAt(point: Point): Joint | null {
+  function nearestMotorJoint(
+    point: Point,
+    distOf: (joint: Joint, q: Point) => number | null,
+  ): Joint | null {
     const offsets = currentWrapOffsets();
     let best: Joint | null = null;
     let bestDist = MOTOR_JOINT_HIT_PX / zoom;
@@ -581,9 +704,36 @@ export function createPhysics(container: HTMLElement): Physics {
       if (joint.getType() === MouseJoint.TYPE) continue;
       for (const o of offsets) {
         const q = { x: point.x - o.x, y: point.y - o.y };
-        const dist = jointSelectDistPx(joint, q);
+        const dist = distOf(joint, q);
         if (dist !== null && dist <= bestDist) {
           best = joint;
+          bestDist = dist;
+        }
+      }
+    }
+    return best;
+  }
+
+  function jointAt(point: Point): Joint | null {
+    return nearestMotorJoint(point, jointSelectDistPx);
+  }
+
+  function jointEndAt(point: Point): { joint: Joint; end: JointEnd } | null {
+    const offsets = currentWrapOffsets();
+    let best: { joint: Joint; end: JointEnd } | null = null;
+    let bestDist = MOTOR_JOINT_HIT_PX / zoom;
+    for (let joint: Joint | null = world.getJointList(); joint; joint = joint.getNext() as Joint | null) {
+      if (joint.getType() === MouseJoint.TYPE) continue;
+      for (const o of offsets) {
+        const q = { x: point.x - o.x, y: point.y - o.y };
+        const end = jointEndHit(joint, q, bestDist);
+        if (!end) continue;
+        const ends = jointDrawEndsPx(joint);
+        if (!ends) continue;
+        const pt = end === "a" ? ends.a : ends.b;
+        const dist = Math.hypot(q.x - pt.x, q.y - pt.y);
+        if (dist <= bestDist) {
+          best = { joint, end };
           bestDist = dist;
         }
       }
@@ -678,8 +828,13 @@ export function createPhysics(container: HTMLElement): Physics {
     },
     bodyAt,
     jointAt,
+    jointEndAt,
     setSelectedJoint(joint: Joint | null): void {
       selectedJoint = joint;
+    },
+    setHoveredJoint(joint: Joint | null, end: JointEnd | null = null): void {
+      hoveredJoint = joint;
+      hoveredEnd = joint ? end : null;
     },
   };
 }

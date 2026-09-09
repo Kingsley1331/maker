@@ -8,7 +8,7 @@ import {
   type Joint,
   type World,
 } from "planck";
-import type { JointUserData } from "./shapes";
+import { isPickable, type JointUserData } from "./shapes";
 import { toMeters, toPixels, vecToMeters, vecToPixels, type Point } from "./units";
 
 export type JointType = "pin" | "revolute" | "rod" | "weld" | "wheel" | "prismatic";
@@ -19,18 +19,47 @@ export const JOINT_TYPES: JointType[] = ["pin", "revolute", "rod", "weld", "whee
 /** Click radius around a drawn motor pivot, in pixels. */
 export const MOTOR_JOINT_HIT_PX = 10;
 
+export type JointEnd = "a" | "b";
+
 export function isMotorJoint(kind: string): kind is MotorJointType {
   return kind === "pin" || kind === "revolute" || kind === "wheel" || kind === "prismatic";
 }
 
-export function motorJointLabel(kind: MotorJointType): string {
+export function jointKindLabel(kind: JointUserData["kind"]): string {
   if (kind === "pin") return "Pin";
+  if (kind === "revolute") return "Revolute";
+  if (kind === "rod") return "Rod";
+  if (kind === "weld") return "Weld";
   if (kind === "wheel") return "Wheel";
-  if (kind === "prismatic") return "Slider";
-  return "Revolute";
+  return "Slider";
+}
+
+export function motorJointLabel(kind: MotorJointType): string {
+  return jointKindLabel(kind);
 }
 
 type MotorJoint = RevoluteJoint | WheelJoint | PrismaticJoint;
+
+interface AnchoredJoint extends Joint {
+  m_localAnchorA: { x: number; y: number };
+  m_localAnchorB: { x: number; y: number };
+  m_localXAxisA?: { x: number; y: number };
+  m_localYAxisA?: { x: number; y: number };
+}
+
+function asAnchored(joint: Joint): AnchoredJoint | null {
+  const j = joint as AnchoredJoint;
+  if (!j.m_localAnchorA || !j.m_localAnchorB) return null;
+  return j;
+}
+
+function isBarKind(kind: JointUserData["kind"]): boolean {
+  return kind === "rod" || kind === "weld" || kind === "wheel" || kind === "prismatic";
+}
+
+function isHubKind(kind: JointUserData["kind"]): boolean {
+  return kind === "pin" || kind === "revolute";
+}
 
 function asMotorJoint(joint: Joint): MotorJoint | null {
   const type = joint.getType();
@@ -44,15 +73,32 @@ function isPrismatic(joint: Joint): joint is PrismaticJoint {
   return joint.getType() === PrismaticJoint.TYPE;
 }
 
+/** Drawn ends of a scene joint, in pixels. Pin / revolute use the same hub for both. */
+export function jointDrawEndsPx(joint: Joint): { a: Point; b: Point } | null {
+  const data = joint.getUserData() as JointUserData | undefined;
+  if (!data?.kind) return null;
+  if (data.localA && data.localB) {
+    return {
+      a: vecToPixels(joint.getBodyA().getWorldPoint(data.localA)),
+      b: vecToPixels(joint.getBodyB().getWorldPoint(data.localB)),
+    };
+  }
+  const a = joint.getAnchorA();
+  const b = joint.getAnchorB();
+  return {
+    a: { x: toPixels(a.x), y: toPixels(a.y) },
+    b: { x: toPixels(b.x), y: toPixels(b.y) },
+  };
+}
+
 /** Drawn pivot of a pin / revolute / wheel / slider, in pixels. */
 export function jointPivotPx(joint: Joint): Point | null {
+  const ends = jointDrawEndsPx(joint);
+  if (!ends) return null;
   const data = joint.getUserData() as JointUserData | undefined;
-  if (!data || !isMotorJoint(data.kind)) return null;
-  if ((data.kind === "wheel" || data.kind === "prismatic") && data.localB) {
-    return vecToPixels(joint.getBodyB().getWorldPoint(data.localB));
-  }
-  const b = joint.getAnchorB();
-  return { x: toPixels(b.x), y: toPixels(b.y) };
+  if (data && isHubKind(data.kind)) return ends.b;
+  if (data && (data.kind === "wheel" || data.kind === "prismatic")) return ends.b;
+  return ends.b;
 }
 
 function distToSegmentPx(p: Point, a: Point, b: Point): number {
@@ -65,20 +111,122 @@ function distToSegmentPx(p: Point, a: Point, b: Point): number {
 }
 
 /**
- * Distance in pixels from `point` to the selectable drawing of a motor joint, or null if the
- * joint cannot be selected. Sliders and wheels use the whole rail, not only the hub.
+ * Distance in pixels from `point` to the selectable drawing of a scene joint, or null if the
+ * joint cannot be selected. Bar joints use the whole rail; pin / revolute use the hub.
  */
 export function jointSelectDistPx(joint: Joint, point: Point): number | null {
   const data = joint.getUserData() as JointUserData | undefined;
-  if (!data || !isMotorJoint(data.kind)) return null;
-  if ((data.kind === "wheel" || data.kind === "prismatic") && data.localA && data.localB) {
-    const a = vecToPixels(joint.getBodyA().getWorldPoint(data.localA));
-    const b = vecToPixels(joint.getBodyB().getWorldPoint(data.localB));
-    return distToSegmentPx(point, a, b);
+  const ends = jointDrawEndsPx(joint);
+  if (!data?.kind || !ends) return null;
+  if (isBarKind(data.kind)) return distToSegmentPx(point, ends.a, ends.b);
+  return Math.hypot(point.x - ends.b.x, point.y - ends.b.y);
+}
+
+/**
+ * Which drawn end is under `point` within `maxDistPx`, or null. Pin / revolute always report
+ * `'b'` (the member hub). Prefer the nearer end when both hit.
+ */
+export function jointEndHit(joint: Joint, point: Point, maxDistPx: number): JointEnd | null {
+  const data = joint.getUserData() as JointUserData | undefined;
+  const ends = jointDrawEndsPx(joint);
+  if (!data?.kind || !ends) return null;
+  const da = Math.hypot(point.x - ends.a.x, point.y - ends.a.y);
+  const db = Math.hypot(point.x - ends.b.x, point.y - ends.b.y);
+  if (isHubKind(data.kind)) return db <= maxDistPx ? "b" : null;
+  const aHit = da <= maxDistPx;
+  const bHit = db <= maxDistPx;
+  if (aHit && bHit) return da <= db ? "a" : "b";
+  if (aHit) return "a";
+  if (bHit) return "b";
+  return null;
+}
+
+function writeLocalAnchor(anchor: { x: number; y: number }, body: Body, worldPx: Point): Point {
+  const local = body.getLocalPoint(vecToMeters(worldPx));
+  anchor.x = local.x;
+  anchor.y = local.y;
+  return { x: local.x, y: local.y };
+}
+
+function setDrawAxis(joint: AnchoredJoint): void {
+  const data = joint.getUserData() as JointUserData | undefined;
+  if (!data?.localA || !data.localB || !joint.m_localXAxisA) return;
+  const wa = joint.getBodyA().getWorldPoint(data.localA);
+  const wb = joint.getBodyB().getWorldPoint(data.localB);
+  const worldAxis = axisBetween(wa, wb);
+  const local = joint.getBodyA().getLocalVector(worldAxis);
+  joint.m_localXAxisA.x = local.x;
+  joint.m_localXAxisA.y = local.y;
+  if (joint.m_localYAxisA) {
+    joint.m_localYAxisA.x = -local.y;
+    joint.m_localYAxisA.y = local.x;
   }
-  const pivot = jointPivotPx(joint);
-  if (!pivot) return null;
-  return Math.hypot(point.x - pivot.x, point.y - pivot.y);
+}
+
+/**
+ * Move a drawn joint end to `worldPx` (pixels), staying on that end's own body. `hitBody` is
+ * the pickable shape under the pointer (or null). Returns false if the move was ignored.
+ */
+export function setJointEnd(
+  joint: Joint,
+  end: JointEnd,
+  worldPx: Point,
+  hitBody: Body | null,
+): boolean {
+  const data = joint.getUserData() as JointUserData | undefined;
+  const anchored = asAnchored(joint);
+  if (!data?.kind || !anchored) return false;
+  const bodyA = joint.getBodyA();
+  const bodyB = joint.getBodyB();
+
+  if (isHubKind(data.kind)) {
+    const allowed =
+      data.kind === "pin" ? hitBody === bodyB : hitBody === bodyA || hitBody === bodyB;
+    if (!allowed) return false;
+    const localA = writeLocalAnchor(anchored.m_localAnchorA, bodyA, worldPx);
+    const localB = writeLocalAnchor(anchored.m_localAnchorB, bodyB, worldPx);
+    if (data.localA) data.localA = localA;
+    if (data.localB) data.localB = localB;
+    bodyA.setAwake(true);
+    bodyB.setAwake(true);
+    return true;
+  }
+
+  const body = end === "a" ? bodyA : bodyB;
+  if (isPickable(body) && hitBody !== body) return false;
+
+  if (data.kind === "wheel" || data.kind === "prismatic") {
+    const local = body.getLocalPoint(vecToMeters(worldPx));
+    if (end === "a") {
+      data.localA = { x: local.x, y: local.y };
+    } else {
+      data.localB = { x: local.x, y: local.y };
+      writeLocalAnchor(anchored.m_localAnchorA, bodyA, worldPx);
+      writeLocalAnchor(anchored.m_localAnchorB, bodyB, worldPx);
+    }
+    setDrawAxis(anchored);
+    bodyA.setAwake(true);
+    bodyB.setAwake(true);
+    return true;
+  }
+
+  const local = writeLocalAnchor(
+    end === "a" ? anchored.m_localAnchorA : anchored.m_localAnchorB,
+    body,
+    worldPx,
+  );
+  if (end === "a" && data.localA) data.localA = { x: local.x, y: local.y };
+  if (end === "b" && data.localB) data.localB = { x: local.x, y: local.y };
+
+  if (data.kind === "rod") {
+    const wa = bodyA.getWorldPoint(anchored.m_localAnchorA);
+    const wb = bodyB.getWorldPoint(anchored.m_localAnchorB);
+    (joint as DistanceJoint).setLength(Math.hypot(wb.x - wa.x, wb.y - wa.y));
+  }
+
+  bodyA.setAwake(true);
+  bodyB.setAwake(true);
+  return true;
 }
 
 /** Current motor speed (rad/s, or m/s for a slider), or 0 if the motor is off. */
@@ -355,7 +503,7 @@ export function createWheel(
  * move along the line from the first click to the second and cannot rotate relative to the
  * rail. If the clicks coincide, the axis is straight up on the canvas. Neither body is moved.
  * `worldAxis` (metres, unit) overrides the click-derived axis when rebuilding a saved joint.
- * `collideConnected` defaults to false so a piston can sit inside a cylinder.
+ * `collideConnected` defaults to true so the two shapes bump into each other.
  */
 export function createPrismatic(
   world: World,
@@ -364,7 +512,7 @@ export function createPrismatic(
   bodyB: Body,
   pointB: Point,
   worldAxis?: Point,
-  collideConnected = false,
+  collideConnected = true,
 ): Joint | null {
   const a = vecToMeters(pointA);
   const b = vecToMeters(pointB);

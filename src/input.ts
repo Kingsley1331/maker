@@ -1,5 +1,6 @@
 import { MouseJoint, type Body, type Joint, type World } from "planck";
 import { boxCutter, primitiveCutter, trySubtractHole } from "./cut";
+import { connectedBodies, translateGroup } from "./group";
 import {
   createPin,
   createPrismatic,
@@ -7,7 +8,10 @@ import {
   createRod,
   createWeld,
   createWheel,
-  isMotorJoint,
+  jointEndHit,
+  MOTOR_JOINT_HIT_PX,
+  setJointEnd,
+  type JointEnd,
   type JointType,
 } from "./joints";
 import { bodyBoundsPx, nearestWrapPoint, withWrapOffsets, type AfterRender } from "./physics";
@@ -67,6 +71,8 @@ export interface InputOptions {
   onAfterRender(cb: AfterRender): void;
   bodyAt(point: Point): Body | null;
   jointAt(point: Point): Joint | null;
+  jointEndAt(point: Point): { joint: Joint; end: JointEnd } | null;
+  setHoveredJoint(joint: Joint | null, end?: JointEnd | null): void;
   /** World-pixel offsets for wrap copies (identity when wrap is off). */
   getWrapOffsets(): Point[];
 }
@@ -102,6 +108,8 @@ export function setupInput({
   onAfterRender,
   bodyAt,
   jointAt,
+  jointEndAt,
+  setHoveredJoint,
   getWrapOffsets,
 }: InputOptions): Input {
   const selection = createSelection({
@@ -147,6 +155,10 @@ export function setupInput({
   let draft: Point[] = [];
   /** Cursor position for rubber-band previews (polygon/chain draft or pending joint). */
   let hover: Point | null = null;
+  /** Motor hub currently under the pointer (paused); drives the pulse ring. */
+  let hoveredHub: Joint | null = null;
+  /** Paused drag of a joint draw end. */
+  let anchorDrag: { joint: Joint; end: JointEnd } | null = null;
   /** First attachment of a two-click joint (revolute / rod / weld / wheel / slider). */
   let jointAnchor: { body: Body; point: Point } | null = null;
   /** Right / middle mouse camera pan. */
@@ -285,8 +297,9 @@ export function setupInput({
   }
 
   function applyCursor(): void {
-    if (panning || moveOffset) canvas.style.cursor = "grabbing";
+    if (panning || moveOffset || anchorDrag) canvas.style.cursor = "grabbing";
     else if (isZoomTool()) canvas.style.cursor = "grab";
+    else if (hoveredHub) canvas.style.cursor = "pointer";
     else if (
       isSpray() ||
       isCut() ||
@@ -298,6 +311,29 @@ export function setupInput({
     ) {
       canvas.style.cursor = "crosshair";
     } else canvas.style.cursor = "";
+  }
+
+  function updateHubHover(point: Point | null): void {
+    let next: Joint | null = null;
+    let end: JointEnd | null = null;
+    if (
+      point &&
+      isPaused() &&
+      !isSpray() &&
+      !isCut() &&
+      !panning &&
+      !moveOffset &&
+      !anchorDrag &&
+      jointAnchor === null
+    ) {
+      const hit = jointEndAt(point);
+      if (hit) {
+        next = hit.joint;
+        end = hit.end;
+      }
+    }
+    hoveredHub = next;
+    setHoveredJoint(next, end);
   }
 
   function startPan(event: MouseEvent): void {
@@ -394,6 +430,7 @@ export function setupInput({
     moveOffset = null;
     pendingSelectToggle = false;
     sprayLast = null;
+    anchorDrag = null;
     if (grabIdle()) setGrabEnabled(true);
     applyCursor();
     window.removeEventListener("mousemove", onMove);
@@ -425,15 +462,17 @@ export function setupInput({
     if (!isPaused() || !type || !isTwoClickJoint(type)) clearJointAnchor();
   }
 
-  function selectMotorJoint(joint: Joint | null): void {
+  function selectSceneJoint(joint: Joint | null): void {
     if (!joint) return;
     const data = joint.getUserData() as JointUserData | undefined;
-    if (data && isMotorJoint(data.kind)) selection.selectJoint(joint);
+    if (data?.kind) selection.selectJoint(joint);
   }
 
-  function placeJoint(type: JointType, body: Body, point: Point): void {
+  function placeJoint(type: JointType, body: Body, rawPoint: Point): void {
+    // The click may have landed on a wrap copy of the body; anchor on the body's real position.
+    let point = unwrapTowardBody(rawPoint, body);
     if (type === "pin") {
-      selectMotorJoint(createPin(world, ground, body, point));
+      selectSceneJoint(createPin(world, ground, body, point));
       return;
     }
     if (!jointAnchor) {
@@ -442,6 +481,18 @@ export function setupInput({
       return;
     }
     if (jointAnchor.body === body) return;
+    // When wrapping, the two shapes may look adjacent on screen while sitting a whole canvas
+    // apart in world space (one of them is seen through a wrap copy). Slide the second shape's
+    // group onto the copy nearest the first anchor so the joint gets the geometry the user sees.
+    const group = connectedBodies(body);
+    if (!group.includes(jointAnchor.body)) {
+      const near = nearestWrapPoint(point, jointAnchor.point, getWrapOffsets());
+      const shift = { x: near.x - point.x, y: near.y - point.y };
+      if (shift.x !== 0 || shift.y !== 0) {
+        translateGroup(group, vecToMeters(shift));
+        point = near;
+      }
+    }
     let created: Joint | null = null;
     if (type === "revolute") {
       created = createRevolute(world, jointAnchor.body, jointAnchor.point, body, point);
@@ -455,7 +506,7 @@ export function setupInput({
       created = createRod(world, jointAnchor.body, jointAnchor.point, body, point);
     }
     clearJointAnchor();
-    selectMotorJoint(created);
+    selectSceneJoint(created);
   }
 
   // --- Events ----------------------------------------------------------------------------------
@@ -465,7 +516,14 @@ export function setupInput({
     dropJointAnchorIfToolChanged();
     hover = canvasPoint(event);
     setGrabTarget(hover);
+    updateHubHover(hover);
     if (!moveOffset) applyCursor();
+  });
+
+  canvas.addEventListener("mouseleave", () => {
+    hover = null;
+    updateHubHover(null);
+    if (!panning && !moveOffset) applyCursor();
   });
 
   canvas.addEventListener("mousedown", (event) => {
@@ -501,6 +559,11 @@ export function setupInput({
       const hitJoint = jointAt(p);
       if (hitJoint) {
         selection.selectJoint(hitJoint);
+        const end = jointEndHit(hitJoint, p, MOTOR_JOINT_HIT_PX / getZoom());
+        if (end) {
+          anchorDrag = { joint: hitJoint, end };
+          applyCursor();
+        }
         clickOnlyDeselects = true;
         setGrabEnabled(false);
         window.addEventListener("mousemove", onMove);
@@ -612,6 +675,15 @@ export function setupInput({
 
     if (sprayLast) {
       stampSprayAlong(p);
+      return;
+    }
+
+    if (anchorDrag) {
+      dragged = true;
+      const endBody =
+        anchorDrag.end === "a" ? anchorDrag.joint.getBodyA() : anchorDrag.joint.getBodyB();
+      setJointEnd(anchorDrag.joint, anchorDrag.end, unwrapTowardBody(p, endBody), bodyAt(p));
+      setHoveredJoint(anchorDrag.joint, anchorDrag.end);
       return;
     }
 
@@ -738,7 +810,7 @@ export function setupInput({
 
       endGrab();
 
-    if (type) {
+    if (type && !clickOnlyDeselects) {
       if (isPaused() && isClick) {
         if (!pressedBody) {
           clearJointAnchor();
@@ -861,6 +933,7 @@ export function setupInput({
   onAfterRender((ctx) => {
     dropDraftIfToolChanged();
     dropJointAnchorIfToolChanged();
+    updateHubHover(hover);
     if (isCut() && hasSelection()) selection.deselect();
 
     if (marqueeStart && hover && dragged) {
@@ -896,22 +969,28 @@ export function setupInput({
     }
 
     if (jointAnchor) {
-      ctx.save();
-      if (hover) {
+      const anchor = jointAnchor;
+      // The anchor sits at the body's real position, which may be off-canvas when wrapping, so
+      // draw it (and the rubber band to the pointer's nearest copy) once per wrap offset.
+      const to = hover ? nearestWrapPoint(hover, anchor.point, getWrapOffsets()) : null;
+      withWrapOffsets(ctx, getWrapOffsets(), () => {
+        ctx.save();
+        if (to) {
+          ctx.beginPath();
+          ctx.moveTo(anchor.point.x, anchor.point.y);
+          ctx.lineTo(to.x, to.y);
+          ctx.strokeStyle = ACCENT;
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([5, 4]);
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        ctx.fillStyle = ACCENT;
         ctx.beginPath();
-        ctx.moveTo(jointAnchor.point.x, jointAnchor.point.y);
-        ctx.lineTo(hover.x, hover.y);
-        ctx.strokeStyle = ACCENT;
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([5, 4]);
-        ctx.stroke();
-      }
-      ctx.setLineDash([]);
-      ctx.fillStyle = ACCENT;
-      ctx.beginPath();
-      ctx.arc(jointAnchor.point.x, jointAnchor.point.y, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
+        ctx.arc(anchor.point.x, anchor.point.y, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
     }
 
     if (draft.length === 0) return;

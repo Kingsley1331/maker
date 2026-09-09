@@ -65,7 +65,7 @@ export interface Selection {
   select(body: Body): void;
   /** Select an arbitrary set of pickable bodies (marquee). Ignored unless paused. */
   selectMembers(bodies: readonly Body[]): void;
-  /** Select a motor joint. Ignored unless paused. Clears any selected body. */
+  /** Select a scene joint. Ignored unless paused. Clears any selected body. */
   selectJoint(joint: Joint): void;
   deselect(): void;
   /** Move everything selected by `dPx` pixels. */

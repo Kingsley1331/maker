@@ -82,7 +82,7 @@ export interface JointBlueprint {
   axis?: Point;
   /** Slider travel in pixels, or null when the limit is off. */
   travelRangePx?: number | null;
-  /** When true, the two slider bodies can collide with each other. Omitted means false. */
+  /** When false, the two slider bodies do not collide. Omitted means they do. */
   collideConnected?: boolean;
 }
 
@@ -182,7 +182,7 @@ export function buildJoint(
       b,
       vecToPixels(b.getWorldPoint(bp.localB)),
       bp.axis ? a.getWorldVector(bp.axis) : undefined,
-      bp.collideConnected === true,
+      bp.collideConnected !== false,
     );
   }
 
