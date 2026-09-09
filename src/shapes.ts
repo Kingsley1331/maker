@@ -77,8 +77,8 @@ export interface ShapePreview {
 }
 
 export interface JointUserData {
-  kind: "pin" | "revolute" | "rod" | "weld" | "wheel";
-  /** Body-local click points (metres), used to draw weld/wheel bars. */
+  kind: "pin" | "revolute" | "rod" | "weld" | "wheel" | "prismatic";
+  /** Body-local click points (metres), used to draw weld/wheel/prismatic bars. */
   localA?: Point;
   localB?: Point;
 }

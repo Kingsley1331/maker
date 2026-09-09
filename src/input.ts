@@ -1,6 +1,15 @@
 import { MouseJoint, type Body, type Joint, type World } from "planck";
 import { boxCutter, primitiveCutter, trySubtractHole } from "./cut";
-import { createPin, createRevolute, createRod, createWeld, createWheel, type JointType } from "./joints";
+import {
+  createPin,
+  createPrismatic,
+  createRevolute,
+  createRod,
+  createWeld,
+  createWheel,
+  isMotorJoint,
+  type JointType,
+} from "./joints";
 import { bodyBoundsPx, nearestWrapPoint, withWrapOffsets, type AfterRender } from "./physics";
 import { createSelection, type Selection } from "./selection";
 import {
@@ -18,6 +27,7 @@ import {
   randomColor,
   setBodyMass,
   tracePreview,
+  type JointUserData,
   type Point,
   type PrimitiveShape,
   type ShapePreview,
@@ -137,7 +147,7 @@ export function setupInput({
   let draft: Point[] = [];
   /** Cursor position for rubber-band previews (polygon/chain draft or pending joint). */
   let hover: Point | null = null;
-  /** First attachment of a two-click joint (revolute / rod / weld / wheel). */
+  /** First attachment of a two-click joint (revolute / rod / weld / wheel / slider). */
   let jointAnchor: { body: Body; point: Point } | null = null;
   /** Right / middle mouse camera pan. */
   let panning = false;
@@ -261,7 +271,13 @@ export function setupInput({
   }
 
   function isTwoClickJoint(type: JointType): boolean {
-    return type === "revolute" || type === "rod" || type === "weld" || type === "wheel";
+    return (
+      type === "revolute" ||
+      type === "rod" ||
+      type === "weld" ||
+      type === "wheel" ||
+      type === "prismatic"
+    );
   }
 
   function hasSelection(): boolean {
@@ -409,9 +425,15 @@ export function setupInput({
     if (!isPaused() || !type || !isTwoClickJoint(type)) clearJointAnchor();
   }
 
+  function selectMotorJoint(joint: Joint | null): void {
+    if (!joint) return;
+    const data = joint.getUserData() as JointUserData | undefined;
+    if (data && isMotorJoint(data.kind)) selection.selectJoint(joint);
+  }
+
   function placeJoint(type: JointType, body: Body, point: Point): void {
     if (type === "pin") {
-      createPin(world, ground, body, point);
+      selectMotorJoint(createPin(world, ground, body, point));
       return;
     }
     if (!jointAnchor) {
@@ -420,16 +442,20 @@ export function setupInput({
       return;
     }
     if (jointAnchor.body === body) return;
+    let created: Joint | null = null;
     if (type === "revolute") {
-      createRevolute(world, jointAnchor.body, jointAnchor.point, body, point);
+      created = createRevolute(world, jointAnchor.body, jointAnchor.point, body, point);
     } else if (type === "weld") {
-      createWeld(world, jointAnchor.body, jointAnchor.point, body, point);
+      created = createWeld(world, jointAnchor.body, jointAnchor.point, body, point);
     } else if (type === "wheel") {
-      createWheel(world, jointAnchor.body, jointAnchor.point, body, point);
+      created = createWheel(world, jointAnchor.body, jointAnchor.point, body, point);
+    } else if (type === "prismatic") {
+      created = createPrismatic(world, jointAnchor.body, jointAnchor.point, body, point);
     } else {
-      createRod(world, jointAnchor.body, jointAnchor.point, body, point);
+      created = createRod(world, jointAnchor.body, jointAnchor.point, body, point);
     }
     clearJointAnchor();
+    selectMotorJoint(created);
   }
 
   // --- Events ----------------------------------------------------------------------------------

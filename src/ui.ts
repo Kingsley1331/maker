@@ -1,8 +1,12 @@
 import type { Body, BodyType, Joint } from "planck";
 import {
+  FULL_RANGE_DEG,
+  FULL_TRAVEL_PX,
   getAngleRangeDeg,
   getMotorSpeed,
+  getTravelRangePx,
   hasAngleLimit,
+  hasTravelLimit,
   isMotorJoint,
   JOINT_TYPES,
   motorJointLabel,
@@ -38,8 +42,13 @@ export interface UiOptions {
   onPauseToggle(paused: boolean): void;
   /** Called when the motor speed slider moves while a joint is selected. */
   onMotorSpeedChange(speed: number): void;
-  /** Called when the angular range slider moves while a pin / revolute is selected (degrees). */
-  onMotorRangeChange(degrees: number): void;
+  /**
+   * Called when the range slider moves while a limitable joint is selected: degrees for a
+   * pin / revolute, pixels of travel for a slider.
+   */
+  onMotorRangeChange(value: number): void;
+  /** Called when the slider Collide checkbox is toggled. */
+  onSliderCollideChange(collide: boolean): void;
   /** Called when the Static / Dynamic / Kinematic control is used on the current selection. */
   onBodyTypeChange(type: BodyType): void;
   onMassChange(mass: number): void;
@@ -149,6 +158,7 @@ export function setupUi({
   onPauseToggle,
   onMotorSpeedChange,
   onMotorRangeChange,
+  onSliderCollideChange,
   onBodyTypeChange,
   onMassChange,
   onElasticityChange,
@@ -835,17 +845,46 @@ export function setupUi({
   const motorSpeed = requireElement<HTMLInputElement>("motor-speed");
   const motorSpeedValue = requireElement<HTMLOutputElement>("motor-speed-value");
   const motorRangeRow = requireElement<HTMLLabelElement>("motor-range-row");
+  const motorRangeLabel = requireElement<HTMLElement>("motor-range-label");
   const motorRange = requireElement<HTMLInputElement>("motor-range");
   const motorRangeValue = requireElement<HTMLOutputElement>("motor-range-value");
+  const motorCollideRow = requireElement<HTMLLabelElement>("motor-collide-row");
+  const motorCollide = requireElement<HTMLInputElement>("motor-collide");
+
+  /** What the Range slider currently edits: hinge angle (degrees) or slider travel (pixels). */
+  let rangeUnit: "degrees" | "pixels" = "degrees";
 
   function showMotorSpeed(speed: number): void {
     motorSpeed.value = String(speed);
     motorSpeedValue.textContent = speed.toFixed(2);
   }
 
-  function showMotorRange(degrees: number): void {
-    motorRange.value = String(degrees);
-    motorRangeValue.textContent = `${Math.round(degrees)}\u00B0`;
+  function showMotorRange(value: number): void {
+    motorRange.value = String(value);
+    if (rangeUnit === "pixels") {
+      motorRangeValue.textContent = value >= FULL_TRAVEL_PX ? "Free" : `${Math.round(value)} px`;
+    } else {
+      motorRangeValue.textContent = `${Math.round(value)}\u00B0`;
+    }
+  }
+
+  /** Point the Range row at the joint's limit: angle for pin / revolute, travel for sliders. */
+  function configureRangeRow(joint: Joint): void {
+    if (hasTravelLimit(joint)) {
+      rangeUnit = "pixels";
+      motorRangeLabel.textContent = "Travel";
+      motorRange.min = "0";
+      motorRange.max = String(FULL_TRAVEL_PX);
+      motorRange.step = "10";
+      showMotorRange(getTravelRangePx(joint));
+    } else {
+      rangeUnit = "degrees";
+      motorRangeLabel.textContent = "Range";
+      motorRange.min = "0";
+      motorRange.max = String(FULL_RANGE_DEG);
+      motorRange.step = "5";
+      showMotorRange(getAngleRangeDeg(joint));
+    }
   }
 
   function showMotorInfo(joint: Joint | null): void {
@@ -859,11 +898,14 @@ export function setupUi({
       return;
     }
     motorInfo.hidden = false;
+    motorInfo.scrollIntoView({ block: "nearest" });
     motorKind.textContent = motorJointLabel(data.kind);
     showMotorSpeed(getMotorSpeed(joint));
-    // Wheels cannot be angle-limited in Planck, so only pin / revolute get the Range row.
-    motorRangeRow.hidden = !hasAngleLimit(joint);
-    showMotorRange(getAngleRangeDeg(joint));
+    // Wheels cannot be limited in Planck; pin / revolute get an angle Range, sliders a Travel.
+    motorRangeRow.hidden = !hasAngleLimit(joint) && !hasTravelLimit(joint);
+    configureRangeRow(joint);
+    motorCollideRow.hidden = !hasTravelLimit(joint);
+    motorCollide.checked = hasTravelLimit(joint) && joint.getCollideConnected();
   }
 
   motorSpeed.addEventListener("input", () => {
@@ -873,9 +915,13 @@ export function setupUi({
   });
 
   motorRange.addEventListener("input", () => {
-    const degrees = parseFloat(motorRange.value);
-    showMotorRange(degrees);
-    onMotorRangeChange(degrees);
+    const value = parseFloat(motorRange.value);
+    showMotorRange(value);
+    onMotorRangeChange(value);
+  });
+
+  motorCollide.addEventListener("change", () => {
+    onSliderCollideChange(motorCollide.checked);
   });
 
   return {

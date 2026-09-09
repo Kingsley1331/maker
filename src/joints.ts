@@ -1,45 +1,87 @@
-import { DistanceJoint, RevoluteJoint, WeldJoint, WheelJoint, type Body, type Joint, type World } from "planck";
+import {
+  DistanceJoint,
+  PrismaticJoint,
+  RevoluteJoint,
+  WeldJoint,
+  WheelJoint,
+  type Body,
+  type Joint,
+  type World,
+} from "planck";
 import type { JointUserData } from "./shapes";
-import { toPixels, vecToMeters, vecToPixels, type Point } from "./units";
+import { toMeters, toPixels, vecToMeters, vecToPixels, type Point } from "./units";
 
-export type JointType = "pin" | "revolute" | "rod" | "weld" | "wheel";
-export type MotorJointType = "pin" | "revolute" | "wheel";
+export type JointType = "pin" | "revolute" | "rod" | "weld" | "wheel" | "prismatic";
+export type MotorJointType = "pin" | "revolute" | "wheel" | "prismatic";
 
-export const JOINT_TYPES: JointType[] = ["pin", "revolute", "rod", "weld", "wheel"];
+export const JOINT_TYPES: JointType[] = ["pin", "revolute", "rod", "weld", "wheel", "prismatic"];
 
 /** Click radius around a drawn motor pivot, in pixels. */
 export const MOTOR_JOINT_HIT_PX = 10;
 
 export function isMotorJoint(kind: string): kind is MotorJointType {
-  return kind === "pin" || kind === "revolute" || kind === "wheel";
+  return kind === "pin" || kind === "revolute" || kind === "wheel" || kind === "prismatic";
 }
 
 export function motorJointLabel(kind: MotorJointType): string {
   if (kind === "pin") return "Pin";
   if (kind === "wheel") return "Wheel";
+  if (kind === "prismatic") return "Slider";
   return "Revolute";
 }
 
-function asMotorJoint(joint: Joint): RevoluteJoint | WheelJoint | null {
+type MotorJoint = RevoluteJoint | WheelJoint | PrismaticJoint;
+
+function asMotorJoint(joint: Joint): MotorJoint | null {
   const type = joint.getType();
-  if (type === RevoluteJoint.TYPE || type === WheelJoint.TYPE) {
-    return joint as RevoluteJoint | WheelJoint;
+  if (type === RevoluteJoint.TYPE || type === WheelJoint.TYPE || type === PrismaticJoint.TYPE) {
+    return joint as MotorJoint;
   }
   return null;
 }
 
-/** Drawn pivot of a pin / revolute / wheel, in pixels. */
+function isPrismatic(joint: Joint): joint is PrismaticJoint {
+  return joint.getType() === PrismaticJoint.TYPE;
+}
+
+/** Drawn pivot of a pin / revolute / wheel / slider, in pixels. */
 export function jointPivotPx(joint: Joint): Point | null {
   const data = joint.getUserData() as JointUserData | undefined;
   if (!data || !isMotorJoint(data.kind)) return null;
-  if (data.kind === "wheel" && data.localB) {
+  if ((data.kind === "wheel" || data.kind === "prismatic") && data.localB) {
     return vecToPixels(joint.getBodyB().getWorldPoint(data.localB));
   }
   const b = joint.getAnchorB();
   return { x: toPixels(b.x), y: toPixels(b.y) };
 }
 
-/** Current motor speed in rad/s, or 0 if the motor is off. */
+function distToSegmentPx(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-12) return Math.hypot(p.x - a.x, p.y - a.y);
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+  return Math.hypot(p.x - a.x - dx * t, p.y - a.y - dy * t);
+}
+
+/**
+ * Distance in pixels from `point` to the selectable drawing of a motor joint, or null if the
+ * joint cannot be selected. Sliders and wheels use the whole rail, not only the hub.
+ */
+export function jointSelectDistPx(joint: Joint, point: Point): number | null {
+  const data = joint.getUserData() as JointUserData | undefined;
+  if (!data || !isMotorJoint(data.kind)) return null;
+  if ((data.kind === "wheel" || data.kind === "prismatic") && data.localA && data.localB) {
+    const a = vecToPixels(joint.getBodyA().getWorldPoint(data.localA));
+    const b = vecToPixels(joint.getBodyB().getWorldPoint(data.localB));
+    return distToSegmentPx(point, a, b);
+  }
+  const pivot = jointPivotPx(joint);
+  if (!pivot) return null;
+  return Math.hypot(point.x - pivot.x, point.y - pivot.y);
+}
+
+/** Current motor speed (rad/s, or m/s for a slider), or 0 if the motor is off. */
 export function getMotorSpeed(joint: Joint): number {
   const motor = asMotorJoint(joint);
   if (!motor || !motor.isMotorEnabled()) return 0;
@@ -47,8 +89,8 @@ export function getMotorSpeed(joint: Joint): number {
 }
 
 /**
- * Drive a pin / revolute / wheel. Speed 0 turns the motor off; otherwise the joint
- * spins at that angular velocity (negative reverses).
+ * Drive a pin / revolute / wheel / slider. Speed 0 turns the motor off; otherwise the joint
+ * spins at that angular velocity (or slides at that linear velocity). Negative reverses.
  */
 export function setJointMotor(joint: Joint, speed: number): void {
   const motor = asMotorJoint(joint);
@@ -59,7 +101,11 @@ export function setJointMotor(joint: Joint, speed: number): void {
     return;
   }
   const mass = joint.getBodyA().getMass() + joint.getBodyB().getMass();
-  motor.setMaxMotorTorque(1000 * mass);
+  if (isPrismatic(motor)) {
+    motor.setMaxMotorForce(1000 * mass);
+  } else {
+    motor.setMaxMotorTorque(1000 * mass);
+  }
   motor.setMotorSpeed(speed);
   motor.enableMotor(true);
 }
@@ -111,6 +157,59 @@ export function getAngleLimitArc(joint: Joint): { start: number; end: number } |
     start: dir + (joint.getLowerLimit() - angle),
     end: dir + (joint.getUpperLimit() - angle),
   };
+}
+
+/** Slider travel (pixels) at which the limit is treated as "off". */
+export const FULL_TRAVEL_PX = 400;
+
+/** Only sliders (prismatic) can have their linear travel limited. */
+export function hasTravelLimit(joint: Joint): joint is PrismaticJoint {
+  return isPrismatic(joint);
+}
+
+/** Allowed travel in pixels, or FULL_TRAVEL_PX when the limit is off. */
+export function getTravelRangePx(joint: Joint): number {
+  if (!hasTravelLimit(joint) || !joint.isLimitEnabled()) return FULL_TRAVEL_PX;
+  return Math.round(toPixels(joint.getUpperLimit() - joint.getLowerLimit()));
+}
+
+/**
+ * Limit how far the slider can travel, centred on its current position. FULL_TRAVEL_PX (or
+ * more) removes the limit; 0 locks the slider where it is.
+ */
+export function setTravelRange(joint: Joint, px: number): void {
+  if (!hasTravelLimit(joint)) return;
+  if (px >= FULL_TRAVEL_PX) {
+    joint.enableLimit(false);
+    return;
+  }
+  const half = toMeters(Math.max(0, px)) / 2;
+  const translation = joint.getJointTranslation();
+  joint.setLimits(translation - half, translation + half);
+  joint.enableLimit(true);
+}
+
+/**
+ * World segment (pixels) that the slider anchor can travel along, or null when the limit is
+ * off. Used to draw the allowed travel.
+ */
+export function getTravelLimitSegment(joint: Joint): { from: Point; to: Point } | null {
+  if (!hasTravelLimit(joint) || !joint.isLimitEnabled()) return null;
+  const anchor = joint.getAnchorB();
+  const axis = joint.getBodyA().getWorldVector(joint.getLocalAxisA());
+  const translation = joint.getJointTranslation();
+  const lower = joint.getLowerLimit() - translation;
+  const upper = joint.getUpperLimit() - translation;
+  return {
+    from: vecToPixels({ x: anchor.x + axis.x * lower, y: anchor.y + axis.y * lower }),
+    to: vecToPixels({ x: anchor.x + axis.x * upper, y: anchor.y + axis.y * upper }),
+  };
+}
+
+/** Set the joint's range: degrees for a pin / revolute, pixels of travel for a slider. */
+export function setJointRange(joint: Joint, value: number): void {
+  if (hasTravelLimit(joint)) setTravelRange(joint, value);
+  else setAngleRange(joint, value);
 }
 
 /** Pin a body to the world at `world` (pixels). The body can still rotate around that point. */
@@ -208,6 +307,14 @@ export function createWeld(
   );
 }
 
+/** Unit axis from `a` to `b` (metres); straight up on the canvas when the points coincide. */
+function axisBetween(a: Point, b: Point): Point {
+  const axis = { x: b.x - a.x, y: b.y - a.y };
+  const len = Math.hypot(axis.x, axis.y);
+  if (len < 1e-4) return { x: 0, y: -1 };
+  return { x: axis.x / len, y: axis.y / len };
+}
+
 /**
  * Wheel: first click is the chassis, second is the hub. The wheel can spin and slide along
  * the line from the first click to the second (suspension). If the clicks coincide, the axis
@@ -222,13 +329,7 @@ export function createWheel(
 ): Joint | null {
   const a = vecToMeters(pointA);
   const b = vecToMeters(pointB);
-  let axis = { x: b.x - a.x, y: b.y - a.y };
-  const len = Math.hypot(axis.x, axis.y);
-  if (len < 1e-4) {
-    axis = { x: 0, y: -1 };
-  } else {
-    axis = { x: axis.x / len, y: axis.y / len };
-  }
+  const axis = axisBetween(a, b);
   return world.createJoint(
     new WheelJoint(
       {
@@ -237,6 +338,43 @@ export function createWheel(
         dampingRatio: 0.7,
         userData: {
           kind: "wheel",
+          localA: bodyA.getLocalPoint(a),
+          localB: bodyB.getLocalPoint(b),
+        } satisfies JointUserData,
+      },
+      bodyA,
+      bodyB,
+      b,
+      axis,
+    ),
+  );
+}
+
+/**
+ * Slider (prismatic): first click is the rail body, second is the slider. The slider can only
+ * move along the line from the first click to the second and cannot rotate relative to the
+ * rail. If the clicks coincide, the axis is straight up on the canvas. Neither body is moved.
+ * `worldAxis` (metres, unit) overrides the click-derived axis when rebuilding a saved joint.
+ * `collideConnected` defaults to false so a piston can sit inside a cylinder.
+ */
+export function createPrismatic(
+  world: World,
+  bodyA: Body,
+  pointA: Point,
+  bodyB: Body,
+  pointB: Point,
+  worldAxis?: Point,
+  collideConnected = false,
+): Joint | null {
+  const a = vecToMeters(pointA);
+  const b = vecToMeters(pointB);
+  const axis = worldAxis ?? axisBetween(a, b);
+  return world.createJoint(
+    new PrismaticJoint(
+      {
+        collideConnected,
+        userData: {
+          kind: "prismatic",
           localA: bodyA.getLocalPoint(a),
           localB: bodyB.getLocalPoint(b),
         } satisfies JointUserData,

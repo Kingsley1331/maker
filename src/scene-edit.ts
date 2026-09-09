@@ -1,6 +1,7 @@
 import {
   DistanceJoint,
   MouseJoint,
+  PrismaticJoint,
   RevoluteJoint,
   type Body,
   type Joint,
@@ -9,14 +10,18 @@ import {
 import { groupJoints } from "./group";
 import {
   createPin,
+  createPrismatic,
   createRod,
   createWeld,
   createWheel,
   getAngleRangeDeg,
   getMotorSpeed,
+  getTravelRangePx,
   hasAngleLimit,
+  hasTravelLimit,
   setAngleRange,
   setJointMotor,
+  setTravelRange,
 } from "./joints";
 import { cloneBody, getBodyData, isPickable, type JointUserData } from "./shapes";
 import { vecToMeters, vecToPixels, type Point } from "./units";
@@ -64,15 +69,21 @@ export interface JointBlueprint {
   /** Planck local anchors (metres) on each body. */
   localAnchorA: Point;
   localAnchorB: Point;
-  /** Draw anchors for weld / wheel (metres, body-local). */
+  /** Draw anchors for weld / wheel / slider (metres, body-local). */
   localA?: Point;
   localB?: Point;
-  /** Motor speed in rad/s; 0 means off. */
+  /** Motor speed in rad/s (m/s for sliders); 0 means off. */
   motorSpeed: number;
   /** Angle range in degrees, or null when the joint has no limit / limit is off. */
   angleRangeDeg: number | null;
   /** Rest length for rods (metres). */
   length?: number;
+  /** Slider axis, unit vector in body A's local frame. */
+  axis?: Point;
+  /** Slider travel in pixels, or null when the limit is off. */
+  travelRangePx?: number | null;
+  /** When true, the two slider bodies can collide with each other. Omitted means false. */
+  collideConnected?: boolean;
 }
 
 /** Read a scene joint into a plain blueprint, or null for joints we cannot rebuild. */
@@ -86,6 +97,8 @@ export function jointBlueprint(joint: Joint): JointBlueprint | null {
       kind = isGround(joint.getBodyA()) || isGround(joint.getBodyB()) ? "pin" : "revolute";
     } else if (joint.getType() === DistanceJoint.TYPE) {
       kind = "rod";
+    } else if (joint.getType() === PrismaticJoint.TYPE) {
+      kind = "prismatic";
     } else {
       return null;
     }
@@ -102,6 +115,12 @@ export function jointBlueprint(joint: Joint): JointBlueprint | null {
   if (data?.localB) blueprint.localB = { x: data.localB.x, y: data.localB.y };
   if (joint.getType() === DistanceJoint.TYPE) {
     blueprint.length = (joint as DistanceJoint).getLength();
+  }
+  if (hasTravelLimit(joint)) {
+    const axis = joint.getLocalAxisA();
+    blueprint.axis = { x: axis.x, y: axis.y };
+    blueprint.travelRangePx = joint.isLimitEnabled() ? getTravelRangePx(joint) : null;
+    blueprint.collideConnected = joint.getCollideConnected();
   }
   return blueprint;
 }
@@ -155,6 +174,16 @@ export function buildJoint(
       b,
       vecToPixels(b.getWorldPoint(bp.localB)),
     );
+  } else if (bp.kind === "prismatic" && bp.localA && bp.localB) {
+    created = createPrismatic(
+      world,
+      a,
+      vecToPixels(a.getWorldPoint(bp.localA)),
+      b,
+      vecToPixels(b.getWorldPoint(bp.localB)),
+      bp.axis ? a.getWorldVector(bp.axis) : undefined,
+      bp.collideConnected === true,
+    );
   }
 
   if (!created) return null;
@@ -162,7 +191,45 @@ export function buildJoint(
   if (bp.angleRangeDeg !== null && hasAngleLimit(created)) {
     setAngleRange(created, bp.angleRangeDeg);
   }
+  if (bp.travelRangePx != null && hasTravelLimit(created)) {
+    setTravelRange(created, bp.travelRangePx);
+  }
   return created;
+}
+
+/**
+ * Planck only honours collideConnected at creation, so this destroys the slider and rebuilds
+ * it with the new flag. Returns the (possibly new) joint, or null if the slider could not be
+ * restored.
+ */
+export function setPrismaticCollide(
+  world: World,
+  ground: Body,
+  joint: Joint,
+  collide: boolean,
+): Joint | null {
+  if (!hasTravelLimit(joint)) return joint;
+  if (joint.getCollideConnected() === collide) return joint;
+  const bp = jointBlueprint(joint);
+  if (!bp) return joint;
+  const a = joint.getBodyA();
+  const b = joint.getBodyB();
+  world.destroyJoint(joint);
+  const created = buildJoint(world, ground, { ...bp, collideConnected: collide }, a, b);
+  const restored = created ?? buildJoint(world, ground, bp, a, b);
+  // Overlapping AABBs are not re-paired unless a proxy moves; refilter so Collide on/off
+  // takes effect without shoving the bodies.
+  refilterBody(a);
+  refilterBody(b);
+  a.setAwake(true);
+  b.setAwake(true);
+  return restored;
+}
+
+function refilterBody(body: Body): void {
+  for (let f = body.getFixtureList(); f; f = f.getNext()) {
+    f.refilter();
+  }
 }
 
 function cloneJoint(

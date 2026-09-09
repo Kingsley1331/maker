@@ -1,4 +1,4 @@
-import { DistanceJoint, MouseJoint, type Body, type Joint } from "planck";
+import { DistanceJoint, MouseJoint, PrismaticJoint, type Body, type Joint } from "planck";
 import { bodyBoundsPx } from "./physics";
 import { getBodyData, isPickable, scaleBody, type JointUserData } from "./shapes";
 import type { Point } from "./units";
@@ -77,8 +77,12 @@ type WorldTransform = (p: Point) => Point;
  * - anchors on non-members that are not shapes (the ground a pin hangs from) get the same world
  *   transform, so the pin travels with the shapes. Anchors on another *shape* (even a static one)
  *   edited separately are left alone; the joint pulls them back together on Play, as before;
- * - when scaling, member-side anchors, weld/wheel draw points and rod lengths scale too, so the
- *   joint stays on the same spot of each resized shape.
+ * - when scaling, member-side anchors, weld/wheel/slider draw points, rod lengths and slider
+ *   travel limits scale too, so the joint stays on the same spot of each resized shape.
+ *
+ * Known limitation (weld, wheel, slider): the reference angle and slider/wheel axis live in body
+ * A's frame, so rotating body B alone (e.g. against a static rail or the ground) leaves them
+ * stale until Play, when the joint pulls the pose back.
  */
 function fixJoints(bodies: Body[], transform: WorldTransform, scale: number): void {
   const members = new Set(bodies);
@@ -124,6 +128,12 @@ function fixJoints(bodies: Body[], transform: WorldTransform, scale: number): vo
       if (joint instanceof DistanceJoint || joint.getType() === DistanceJoint.TYPE) {
         const rod = joint as DistanceJoint;
         rod.setLength(rod.getLength() * scale);
+      }
+      if (joint.getType() === PrismaticJoint.TYPE) {
+        const slider = joint as PrismaticJoint;
+        if (slider.isLimitEnabled()) {
+          slider.setLimits(slider.getLowerLimit() * scale, slider.getUpperLimit() * scale);
+        }
       }
     }
   }

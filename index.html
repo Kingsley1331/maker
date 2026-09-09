@@ -295,6 +295,42 @@
               <circle cx="12" cy="17" r="1.5" fill="currentColor" />
             </svg>
           </button>
+          <button
+            class="joint-btn"
+            data-joint="prismatic"
+            title="Slider joint (prismatic)"
+            aria-label="Slider joint (prismatic)"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <line x1="2" y1="12" x2="22" y2="12" stroke="currentColor" stroke-width="2" />
+              <line x1="3" y1="8" x2="3" y2="16" stroke="currentColor" stroke-width="2" />
+              <line x1="21" y1="8" x2="21" y2="16" stroke="currentColor" stroke-width="2" />
+              <rect x="9" y="8" width="7" height="8" rx="1" fill="currentColor" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div id="motor-info" class="group" hidden>
+        <span class="label">Motor</span>
+        <dl class="info">
+          <dt>Joint</dt>
+          <dd id="motor-kind"></dd>
+        </dl>
+        <label class="slider" for="motor-speed">
+          <span class="label">Speed <output id="motor-speed-value">0.00</output></span>
+          <input id="motor-speed" type="range" min="-10" max="10" step="0.25" value="0" />
+        </label>
+        <label class="slider" id="motor-range-row" for="motor-range">
+          <span class="label"><span id="motor-range-label">Range</span> <output id="motor-range-value">360°</output></span>
+          <input id="motor-range" type="range" min="0" max="360" step="5" value="360" />
+        </label>
+        <label class="check-row" id="motor-collide-row" for="motor-collide" hidden title="When on, the two shapes can bump into each other through the slider">
+          <span class="label">Collide</span>
+          <input id="motor-collide" type="checkbox" />
+        </label>
+        <div class="selection-actions">
+          <button id="motor-delete" type="button" title="Delete joint">Delete joint</button>
         </div>
       </div>
 
@@ -390,25 +426,6 @@
         </div>
       </div>
 
-      <div id="motor-info" class="group" hidden>
-        <span class="label">Motor</span>
-        <dl class="info">
-          <dt>Joint</dt>
-          <dd id="motor-kind"></dd>
-        </dl>
-        <label class="slider" for="motor-speed">
-          <span class="label">Speed <output id="motor-speed-value">0.00</output></span>
-          <input id="motor-speed" type="range" min="-10" max="10" step="0.25" value="0" />
-        </label>
-        <label class="slider" id="motor-range-row" for="motor-range">
-          <span class="label">Range <output id="motor-range-value">360°</output></span>
-          <input id="motor-range" type="range" min="0" max="360" step="5" value="360" />
-        </label>
-        <div class="selection-actions">
-          <button id="motor-delete" type="button" title="Delete joint">Delete joint</button>
-        </div>
-      </div>
-
       </div>
 
       <div id="scene"></div>
@@ -494,17 +511,20 @@
           </li>
           <li>
             <strong>Joints (paused):</strong> pick a joint tool. Pin attaches a body to the world at the
-            click. Revolute, rod, weld, and wheel take two clicks on different bodies.
+            click. Revolute, rod, weld, wheel, and slider take two clicks on different bodies.
           </li>
           <li>
-            <strong>Weld and wheel:</strong> a weld is a rod that does not allow rotation at the ends. A
-            wheel attaches a spinning hub (second click) to a chassis (first click) with suspension
-            along the line between clicks.
+            <strong>Weld, wheel, and slider:</strong> a weld is a rod that does not allow rotation at the
+            ends. A wheel attaches a spinning hub (second click) to a chassis (first click) with
+            suspension along the line between clicks. A slider lets the second body move only along
+            that line, without spinning. Check Collide on a selected slider if the two shapes should
+            bump into each other.
           </li>
           <li><strong>Cancel:</strong> Escape or a click on empty space cancels a pending second click.</li>
           <li>
-            <strong>Motors and limits:</strong> pause and click a pin, revolute, or wheel to set its motor
-            speed; pin and revolute can also be limited in how far they turn.
+            <strong>Motors and limits:</strong> placing a pin, revolute, wheel, or slider selects it
+            (or pause and click its drawing). Set motor speed; pin and revolute can limit how far they
+            turn, and sliders can limit travel and whether the two shapes collide.
           </li>
           <li>
             <strong>Zoom:</strong> select the Zoom tool in View first. Then the mouse wheel zooms

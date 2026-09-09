@@ -11,7 +11,7 @@ import {
   World,
 } from "planck";
 import { connectedBodies, translateGroup } from "./group";
-import { getAngleLimitArc, jointPivotPx, MOTOR_JOINT_HIT_PX } from "./joints";
+import { getAngleLimitArc, getTravelLimitSegment, jointPivotPx, jointSelectDistPx, MOTOR_JOINT_HIT_PX } from "./joints";
 import {
   FIXTURE,
   getBodyData,
@@ -90,7 +90,7 @@ export interface Physics {
   isPaused(): boolean;
   onAfterRender(cb: AfterRender): void;
   bodyAt(point: Point): Body | null;
-  /** Nearest pin / revolute / wheel whose drawn pivot is within ~10 screen px. */
+  /** Nearest pin / revolute / wheel / slider whose drawn pivot is within ~10 screen px. */
   jointAt(point: Point): Joint | null;
   /** Highlight this motor joint's pivot (or none). */
   setSelectedJoint(joint: Joint | null): void;
@@ -406,7 +406,12 @@ export function createPhysics(container: HTMLElement): Physics {
     ctx.save();
     ctx.fillStyle = JOINT_ACCENT;
     ctx.strokeStyle = JOINT_ACCENT;
-    if (data?.kind === "rod" || data?.kind === "weld" || data?.kind === "wheel") {
+    if (
+      data?.kind === "rod" ||
+      data?.kind === "weld" ||
+      data?.kind === "wheel" ||
+      data?.kind === "prismatic"
+    ) {
       let x1 = ax;
       let y1 = ay;
       let x2 = bx;
@@ -446,6 +451,26 @@ export function createPhysics(container: HTMLElement): Physics {
           ctx.lineWidth = 1.5;
           ctx.beginPath();
           ctx.arc(pivot.x, pivot.y, 14, arc.start, arc.end);
+          ctx.stroke();
+        }
+        // Allowed travel of a slider's limit: a line along the axis with a tick at each end.
+        const travel = getTravelLimitSegment(joint);
+        if (travel) {
+          const dx = travel.to.x - travel.from.x;
+          const dy = travel.to.y - travel.from.y;
+          const len = Math.hypot(dx, dy);
+          // Perpendicular for the end ticks; fall back to horizontal when the travel is zero.
+          const nx = len > 1e-6 ? -dy / len : 1;
+          const ny = len > 1e-6 ? dx / len : 0;
+          const tick = 6;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(travel.from.x, travel.from.y);
+          ctx.lineTo(travel.to.x, travel.to.y);
+          for (const end of [travel.from, travel.to]) {
+            ctx.moveTo(end.x - nx * tick, end.y - ny * tick);
+            ctx.lineTo(end.x + nx * tick, end.y + ny * tick);
+          }
           ctx.stroke();
         }
       }
@@ -554,11 +579,10 @@ export function createPhysics(container: HTMLElement): Physics {
     let bestDist = MOTOR_JOINT_HIT_PX / zoom;
     for (let joint: Joint | null = world.getJointList(); joint; joint = joint.getNext() as Joint | null) {
       if (joint.getType() === MouseJoint.TYPE) continue;
-      const pivot = jointPivotPx(joint);
-      if (!pivot) continue;
       for (const o of offsets) {
-        const dist = Math.hypot(point.x - o.x - pivot.x, point.y - o.y - pivot.y);
-        if (dist <= bestDist) {
+        const q = { x: point.x - o.x, y: point.y - o.y };
+        const dist = jointSelectDistPx(joint, q);
+        if (dist !== null && dist <= bestDist) {
           best = joint;
           bestDist = dist;
         }

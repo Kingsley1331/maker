@@ -1,7 +1,7 @@
 import { createPhysics } from "./physics";
 import { setupInput } from "./input";
-import { setAngleRange, setJointMotor } from "./joints";
-import { deleteSelection, duplicateSelection } from "./scene-edit";
+import { setJointMotor, setJointRange } from "./joints";
+import { deleteSelection, duplicateSelection, setPrismaticCollide } from "./scene-edit";
 import {
   clearScene,
   deserializeScene,
@@ -45,9 +45,16 @@ const ui = setupUi({
     const joint = input.selection.selectedJoint;
     if (joint) setJointMotor(joint, speed);
   },
-  onMotorRangeChange: (degrees) => {
+  onMotorRangeChange: (value) => {
     const joint = input.selection.selectedJoint;
-    if (joint) setAngleRange(joint, degrees);
+    if (joint) setJointRange(joint, value);
+  },
+  onSliderCollideChange: (collide) => {
+    const joint = input.selection.selectedJoint;
+    if (!joint) return;
+    const created = setPrismaticCollide(physics.world, physics.ground, joint, collide);
+    if (created) input.selection.selectJoint(created);
+    else input.selection.deselect();
   },
   onBodyTypeChange: (type) => {
     for (const body of input.selection.members) {
