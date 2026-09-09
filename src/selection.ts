@@ -1,4 +1,10 @@
-import type { Body, Joint } from "planck";
+import type { Body, Joint, World } from "planck";
+import {
+  alignThreshold,
+  collectTargetBounds,
+  matchRotate,
+  type AlignGuides,
+} from "./align-guides";
 import { connectedBodies, groupBoundsPx, rotateGroup, scaleGroup, translateGroup } from "./group";
 import { bodyBoundsPx, nearestWrapPoint, withWrapOffsets, type AfterRender } from "./physics";
 import { isPickable } from "./shapes";
@@ -49,6 +55,8 @@ export interface SelectionOptions {
   onAfterRender(cb: AfterRender): void;
   /** World-pixel offsets for wrap copies (identity when wrap is off). */
   getWrapOffsets(): Point[];
+  world: World;
+  guides: AlignGuides;
 }
 
 export interface Selection {
@@ -88,6 +96,8 @@ export function createSelection({
   onJointSelectionUpdate,
   onAfterRender,
   getWrapOffsets,
+  world,
+  guides,
 }: SelectionOptions): Selection {
   let selected: Body | null = null;
   /** Bodies being edited. Empty when nothing is selected. */
@@ -215,6 +225,7 @@ export function createSelection({
     selectedJoint = null;
     interaction = "none";
     canvas.style.cursor = "";
+    guides.clear();
     onSelectionUpdate(null, []);
     onJointSelectionUpdate(null);
   }
@@ -372,16 +383,27 @@ export function createSelection({
     accumulated += delta;
 
     const target = event.shiftKey ? Math.round(accumulated / ROTATE_SNAP) * ROTATE_SNAP : accumulated;
-    const step = target - snappedApplied;
+    const extra = target - snappedApplied;
+    const aligned = matchRotate(
+      members,
+      pivot,
+      extra,
+      collectTargetBounds(world, members, pivot, getWrapOffsets()),
+      alignThreshold(getZoom()),
+      !event.shiftKey,
+    );
+    const step = extra + aligned.dAngle;
     if (step !== 0) {
       rotateGroup(members, pivotM, step);
-      snappedApplied = target;
+      snappedApplied += step;
     }
+    guides.set(aligned.lines);
   }
 
   function onUp(): void {
     interaction = "none";
     canvas.style.cursor = "";
+    guides.clear();
     window.removeEventListener("mousemove", onMove);
     window.removeEventListener("mouseup", onUp);
   }
@@ -407,6 +429,7 @@ export function createSelection({
         startWidth = Math.max(bounds.max.x - bounds.min.x, 1);
         applied = 1;
         interaction = "scale";
+        guides.clear();
       } else {
         lastPointerAngle = pointerAngle(p);
         accumulated = 0;

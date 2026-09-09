@@ -1,6 +1,16 @@
 import { MouseJoint, type Body, type Joint, type World } from "planck";
+import {
+  alignThreshold,
+  collectTargetBounds,
+  createAlignGuides,
+  matchBounds,
+  radialPreviewBounds,
+  snapBoxPointer,
+  snapDrawPoint,
+  snapRadialSize,
+} from "./align-guides";
 import { boxCutter, primitiveCutter, trySubtractHole } from "./cut";
-import { connectedBodies, translateGroup } from "./group";
+import { connectedBodies, groupBoundsPx, translateGroup } from "./group";
 import {
   createPin,
   createPrismatic,
@@ -28,6 +38,7 @@ import {
   edgeEndpoints,
   frameBounds,
   isPickable,
+  isPrimitiveShape,
   randomColor,
   setBodyMass,
   tracePreview,
@@ -112,6 +123,7 @@ export function setupInput({
   setHoveredJoint,
   getWrapOffsets,
 }: InputOptions): Input {
+  const guides = createAlignGuides({ getWrapOffsets, onAfterRender });
   const selection = createSelection({
     canvas,
     getSize,
@@ -126,6 +138,8 @@ export function setupInput({
     onJointSelectionUpdate,
     onAfterRender,
     getWrapOffsets,
+    world,
+    guides,
   });
 
   let grabEnabled = true;
@@ -166,6 +180,8 @@ export function setupInput({
   let panLast: Point | null = null;
   /** Spray trail: last stamped world-pixel position. */
   let sprayLast: Point | null = null;
+  /** Snapped pointer used to size a shape so mouseup matches the preview. */
+  let spawnSnap: Point | null = null;
 
   function screenPoint(event: MouseEvent): Point {
     const rect = canvas.getBoundingClientRect();
@@ -178,6 +194,20 @@ export function setupInput({
 
   function clickSlop(): number {
     return CLICK_THRESHOLD / getZoom();
+  }
+
+  function alignmentOn(): boolean {
+    return !isCut() && !isSpray() && !isZoomTool();
+  }
+
+  function snapDraftPoint(p: Point): Point {
+    if (!alignmentOn() || !isDraftTool()) return p;
+    const extras = draft.map((v) => ({ min: v, max: v }));
+    const targets = [...collectTargetBounds(world, [], p, getWrapOffsets()), ...extras];
+    const from = draft.length > 0 ? draft[draft.length - 1] : undefined;
+    const snapped = snapDrawPoint(p, targets, alignThreshold(getZoom()), from);
+    guides.set(snapped.lines);
+    return snapped.point;
   }
 
   function maxSize(): number {
@@ -357,6 +387,7 @@ export function setupInput({
   function clearDraft(): void {
     draft = [];
     hover = null;
+    guides.clear();
     if (grabIdle()) setGrabEnabled(true);
   }
 
@@ -430,7 +461,9 @@ export function setupInput({
     moveOffset = null;
     pendingSelectToggle = false;
     sprayLast = null;
+    spawnSnap = null;
     anchorDrag = null;
+    guides.clear();
     if (grabIdle()) setGrabEnabled(true);
     applyCursor();
     window.removeEventListener("mousemove", onMove);
@@ -515,6 +548,10 @@ export function setupInput({
     dropDraftIfToolChanged();
     dropJointAnchorIfToolChanged();
     hover = canvasPoint(event);
+    if (!pressPoint) {
+      if (isDraftTool() && alignmentOn()) hover = snapDraftPoint(hover);
+      else if (!selection.isInteracting) guides.clear();
+    }
     setGrabTarget(hover);
     updateHubHover(hover);
     if (!moveOffset) applyCursor();
@@ -523,6 +560,7 @@ export function setupInput({
   canvas.addEventListener("mouseleave", () => {
     hover = null;
     updateHubHover(null);
+    if (!pressPoint && !selection.isInteracting) guides.clear();
     if (!panning && !moveOffset) applyCursor();
   });
 
@@ -703,7 +741,26 @@ export function setupInput({
         x: local.x + moveOffset.x - posPx.x,
         y: local.y + moveOffset.y - posPx.y,
       };
-      selection.translate(delta);
+      if (alignmentOn()) {
+        const current = groupBoundsPx([...selection.members]);
+        const tentative = {
+          min: { x: current.min.x + delta.x, y: current.min.y + delta.y },
+          max: { x: current.max.x + delta.x, y: current.max.y + delta.y },
+        };
+        const center = {
+          x: (tentative.min.x + tentative.max.x) / 2,
+          y: (tentative.min.y + tentative.max.y) / 2,
+        };
+        const result = matchBounds(
+          tentative,
+          collectTargetBounds(world, selection.members, center, getWrapOffsets()),
+          alignThreshold(getZoom()),
+        );
+        selection.translate({ x: delta.x + result.dx, y: delta.y + result.dy });
+        guides.set(result.lines);
+      } else {
+        selection.translate(delta);
+      }
       return;
     }
 
@@ -712,9 +769,27 @@ export function setupInput({
     if (!dragged && dist <= clickSlop()) return;
 
     dragged = true;
+    let q = p;
+    if (alignmentOn()) {
+      const threshold = alignThreshold(getZoom());
+      const targets = collectTargetBounds(world, [], p, getWrapOffsets());
+      if (isEdgeTool()) {
+        const snapped = snapDrawPoint(p, targets, threshold, spawnStart);
+        q = snapped.point;
+        guides.set(snapped.lines);
+      } else if (isCornerDragTool()) {
+        const snapped = snapBoxPointer(spawnStart, p, targets, threshold);
+        q = snapped.point;
+        guides.set(snapped.lines);
+      }
+      spawnSnap = q;
+    } else {
+      guides.clear();
+    }
+
     if (isEdgeTool()) {
       ghostColor ??= isCut() ? CUT_FILL : randomColor();
-      const ends = edgeEndpoints(spawnStart, p);
+      const ends = edgeEndpoints(spawnStart, q);
       ghost = {
         type: "edge",
         x: ends.a.x,
@@ -729,7 +804,7 @@ export function setupInput({
     if (isCornerDragTool()) {
       ghostColor ??= isCut() ? CUT_FILL : randomColor();
       if (isFrameTool()) {
-        const bounds = frameBounds(spawnStart, p, getWallThickness());
+        const bounds = frameBounds(spawnStart, q, getWallThickness());
         ghost = {
           type: "frame",
           x: bounds.x,
@@ -741,7 +816,7 @@ export function setupInput({
           thickness: bounds.thickness,
         };
       } else {
-        const bounds = boxBounds(spawnStart, p);
+        const bounds = boxBounds(spawnStart, q);
         ghost = {
           type: "box",
           x: bounds.x,
@@ -755,8 +830,25 @@ export function setupInput({
       return;
     }
 
-    const size = Math.min(Math.max(dist, MIN_SIZE), maxSize());
-    if (!ghost || Math.abs(size - ghostSize) > 0.5) {
+    let size = Math.min(Math.max(dist, MIN_SIZE), maxSize());
+    if (alignmentOn()) {
+      const tool = getActiveTool();
+      if (tool.kind === "shape" && isPrimitiveShape(tool.shape)) {
+        const bounds = radialPreviewBounds(tool.shape, spawnStart.x, spawnStart.y, size);
+        const snapped = snapRadialSize(
+          spawnStart,
+          size,
+          bounds,
+          collectTargetBounds(world, [], spawnStart, getWrapOffsets()),
+          alignThreshold(getZoom()),
+          MIN_SIZE,
+          maxSize(),
+        );
+        size = snapped.size;
+        guides.set(snapped.lines);
+      }
+    }
+    if (!ghost || Math.abs(size - ghostSize) > 1e-4) {
       rebuildGhost(size);
     }
   }
@@ -805,6 +897,7 @@ export function setupInput({
     try {
       if (eventOnToolbar(event)) return;
       const p = canvasPoint(event);
+      const drawAt = spawnSnap ?? p;
       const isClick = Math.hypot(p.x - pressPoint.x, p.y - pressPoint.y) <= clickSlop();
       const type = jointType();
 
@@ -825,8 +918,9 @@ export function setupInput({
         !clickOnlyDeselects &&
         (!pressedBody || isCut())
       ) {
-        draft.push(p);
-        hover = p;
+        const vertex = snapDraftPoint(p);
+        draft.push(vertex);
+        hover = vertex;
         setGrabEnabled(false);
       }
     } else if (marqueeStart) {
@@ -849,7 +943,7 @@ export function setupInput({
       } else if (isBoxTool()) {
         if (isChainOutline()) {
           if (dragged) {
-            createChain(world, boxCutter(spawnStart, p), true);
+            createChain(world, boxCutter(spawnStart, drawAt), true);
           } else if (isClick && !clickOnlyDeselects) {
             createChain(
               world,
@@ -861,7 +955,7 @@ export function setupInput({
             );
           }
         } else if (dragged) {
-          createBox(world, spawnStart, p, ghostColor ?? randomColor());
+          createBox(world, spawnStart, drawAt, ghostColor ?? randomColor());
         } else if (isClick && !clickOnlyDeselects) {
           createBox(
             world,
@@ -873,7 +967,7 @@ export function setupInput({
         const color = ghostColor ?? randomColor();
         const thickness = getWallThickness();
         if (dragged) {
-          createFrame(world, spawnStart, p, thickness, color);
+          createFrame(world, spawnStart, drawAt, thickness, color);
         } else if (isClick && !clickOnlyDeselects) {
           createFrame(
             world,
@@ -884,7 +978,7 @@ export function setupInput({
         }
       } else if (isEdgeTool()) {
         if (dragged) {
-          createEdge(world, spawnStart, p, ghostColor ?? randomColor());
+          createEdge(world, spawnStart, drawAt, ghostColor ?? randomColor());
         } else if (isClick && !clickOnlyDeselects) {
           createEdge(
             world,
