@@ -45,7 +45,8 @@ const FRAME_INNER_GAP = 4;
 
 export type { Point };
 
-export type BodyKind = "shape" | "wall" | "ground";
+/** `ghost`: invisible wrap-mode mirror of a shape (see wrap-ghosts.ts); never pickable or drawn. */
+export type BodyKind = "shape" | "wall" | "ground" | "ghost";
 
 export interface BodyUserData {
   kind: BodyKind;

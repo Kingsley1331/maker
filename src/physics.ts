@@ -29,6 +29,7 @@ import {
   type JointUserData,
 } from "./shapes";
 import { GRAVITY_SCALE, toMeters, toPixels, vecToMeters, vecToPixels, type Point } from "./units";
+import { createWrapGhosts } from "./wrap-ghosts";
 
 const WALL_THICKNESS = 200;
 const WALL_FILL = "#22262e";
@@ -214,6 +215,7 @@ export function createPhysics(container: HTMLElement): Physics {
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Could not create 2D canvas context");
   const ctx: CanvasRenderingContext2D = context;
+  const ghosts = createWrapGhosts(world);
 
   let walls: Body[] = [];
   let lastW = 0;
@@ -358,7 +360,7 @@ export function createPhysics(container: HTMLElement): Physics {
 
   function drawBody(body: Body): void {
     const data = getBodyData(body);
-    if (!data || data.kind === "ground") return;
+    if (!data || data.kind === "ground" || data.kind === "ghost") return;
     ctx.fillStyle = data.fillStyle;
     const strokeShape = data.kind === "shape";
     if (strokeShape) {
@@ -589,7 +591,8 @@ export function createPhysics(container: HTMLElement): Physics {
     const jointBounds = new Map<Joint, { min: Point; max: Point }>();
     if (cull) {
       for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
-        if (getBodyData(body)?.kind !== "wall") bodyBounds.set(body, bodyBoundsPx(body));
+        const kind = getBodyData(body)?.kind;
+        if (kind !== "wall" && kind !== "ghost") bodyBounds.set(body, bodyBoundsPx(body));
       }
       for (let joint: Joint | null = world.getJointList(); joint; joint = joint.getNext() as Joint | null) {
         // The selected joint also draws its limit arc / travel segment; never cull it.
@@ -607,7 +610,8 @@ export function createPhysics(container: HTMLElement): Physics {
       ctx.save();
       ctx.translate(o.x, o.y);
       for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
-        if (getBodyData(body)?.kind === "wall") continue;
+        const kind = getBodyData(body)?.kind;
+        if (kind === "wall" || kind === "ghost") continue;
         const b = bodyBounds.get(body);
         if (b && !copyInView(b.min, b.max, o, view)) continue;
         drawBody(body);
@@ -631,7 +635,9 @@ export function createPhysics(container: HTMLElement): Physics {
     if (!paused) {
       acc += dt;
       while (acc >= STEP) {
+        if (wrapEnabled) ghosts.sync(size);
         world.step(STEP, VELOCITY_ITERATIONS, POSITION_ITERATIONS);
+        if (wrapEnabled) ghosts.apply(STEP);
         acc -= STEP;
       }
     }
@@ -806,6 +812,7 @@ export function createPhysics(container: HTMLElement): Physics {
     setWrapEnabled(on: boolean): void {
       if (wrapEnabled === on) return;
       wrapEnabled = on;
+      if (!on) ghosts.clear();
       buildWalls(size.w, size.h);
       if (wrapEnabled) wrapBodies();
     },
