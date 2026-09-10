@@ -62,6 +62,20 @@
           Pause
         </button>
         <button
+          id="clock-toggle"
+          class="icon-btn"
+          type="button"
+          title="Show step counter"
+          aria-label="Show step counter"
+          aria-pressed="false"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" />
+            <line x1="12" y1="12" x2="12" y2="7" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            <line x1="12" y1="12" x2="16" y2="14" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          </svg>
+        </button>
+        <button
           id="help-open"
           class="icon-btn"
           type="button"
@@ -436,7 +450,43 @@
 
       </div>
 
-      <div id="scene"></div>
+      <div id="scene">
+        <div id="sim-hud" class="sim-hud" hidden>
+          <span class="hud-readout" aria-live="polite">
+            <span id="hud-steps">0</span> steps
+            <span class="hud-sep" aria-hidden="true">·</span>
+            <span id="hud-time">0.00</span> s
+          </span>
+          <button
+            id="hud-pause"
+            class="hud-btn"
+            type="button"
+            title="Pause / Play (Space)"
+            aria-label="Pause"
+          >
+            <svg class="hud-icon-pause" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" />
+              <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" />
+            </svg>
+            <svg class="hud-icon-play" viewBox="0 0 24 24" aria-hidden="true">
+              <polygon points="8,5 19,12 8,19" fill="currentColor" />
+            </svg>
+          </button>
+          <button
+            id="hud-step"
+            class="hud-btn"
+            type="button"
+            title="Step one frame"
+            aria-label="Step one frame"
+            hidden
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <polygon points="5,5 14,12 5,19" fill="currentColor" />
+              <rect x="16" y="5" width="3" height="14" rx="0.5" fill="currentColor" />
+            </svg>
+          </button>
+        </div>
+      </div>
     </div>
 
     <dialog id="help-dialog" class="help" aria-labelledby="help-title">
@@ -563,6 +613,11 @@
             <strong>Wrap edges:</strong> shapes that leave one side of the canvas reappear on the
             opposite side, and the part that hangs off an edge is drawn on the other side. The
             solid boundary walls turn off while wrap is on.
+          </li>
+          <li>
+            <strong>Clock:</strong> the clock button on the toolbar shows a step count and simulated
+            time (seconds at 60 steps per second) in the top-right of the canvas. Pause / Play there
+            matches the toolbar button and Space. While paused, Step advances one frame.
           </li>
           <li><strong>Space</strong> toggles Pause / Play.</li>
         </ul>

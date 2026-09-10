@@ -44,6 +44,8 @@ export interface UiOptions {
   onWrapChange(wrap: boolean): void;
   /** Called with the requested state when the user toggles Pause/Play (button or Space). */
   onPauseToggle(paused: boolean): void;
+  /** Advance the simulation by one physics step (paused only). */
+  onStep(): void;
   /** Called when the motor speed slider moves while a joint is selected. */
   onMotorSpeedChange(speed: number): void;
   /**
@@ -132,6 +134,8 @@ export interface Ui {
   setActiveTool(tool: ActiveTool): void;
   /** Reflect the current paused state on the toggle button. */
   setPaused(paused: boolean): void;
+  /** Update the canvas HUD step count and simulated time. */
+  setClock(steps: number, seconds: number): void;
   /** Keep the Zoom slider in sync with wheel / other non-slider changes. */
   setZoom(zoom: number): void;
 }
@@ -166,6 +170,7 @@ export function setupUi({
   onBackgroundChange,
   onWrapChange,
   onPauseToggle,
+  onStep,
   onMotorSpeedChange,
   onMotorRangeChange,
   onSliderCollideChange,
@@ -194,17 +199,46 @@ export function setupUi({
   // Pause / Play
   let paused = false;
   const pauseButton = requireElement<HTMLButtonElement>("pause-toggle");
+  const clockToggle = requireElement<HTMLButtonElement>("clock-toggle");
+  const simHud = requireElement<HTMLDivElement>("sim-hud");
+  const hudSteps = requireElement<HTMLElement>("hud-steps");
+  const hudTime = requireElement<HTMLElement>("hud-time");
+  const hudPause = requireElement<HTMLButtonElement>("hud-pause");
+  const hudStep = requireElement<HTMLButtonElement>("hud-step");
 
   function setPaused(value: boolean): void {
     paused = value;
     pauseButton.textContent = paused ? "Play" : "Pause";
     pauseButton.setAttribute("aria-pressed", String(paused));
     pauseButton.classList.toggle("is-paused", paused);
+    hudPause.classList.toggle("is-paused", paused);
+    hudPause.setAttribute("aria-label", paused ? "Play" : "Pause");
+    hudStep.hidden = !paused;
     if (!paused && activeTool.kind === "joint") setActiveTool({ kind: "none" });
     else syncToolButtons();
   }
 
   bindActivate(pauseButton, () => onPauseToggle(!paused));
+  bindActivate(hudPause, () => onPauseToggle(!paused));
+  bindActivate(hudStep, () => onStep());
+
+  function setClockVisible(visible: boolean): void {
+    simHud.hidden = !visible;
+    clockToggle.classList.toggle("is-active", visible);
+    clockToggle.setAttribute("aria-pressed", String(visible));
+    clockToggle.title = visible ? "Hide step counter" : "Show step counter";
+    clockToggle.setAttribute("aria-label", clockToggle.title);
+  }
+
+  bindActivate(clockToggle, () => setClockVisible(simHud.hidden));
+
+  function setClock(steps: number, seconds: number): void {
+    if (simHud.hidden) return;
+    const stepText = String(steps);
+    const timeText = seconds.toFixed(2);
+    if (hudSteps.textContent !== stepText) hudSteps.textContent = stepText;
+    if (hudTime.textContent !== timeText) hudTime.textContent = timeText;
+  }
 
   // Help modal
   const helpDialog = requireElement<HTMLDialogElement>("help-dialog");
@@ -996,6 +1030,7 @@ export function setupUi({
     showMotorInfo,
     setActiveTool,
     setPaused,
+    setClock,
     setZoom: showZoom,
   };
 }

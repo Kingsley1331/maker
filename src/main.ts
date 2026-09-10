@@ -41,6 +41,9 @@ const ui = setupUi({
     }
     ui.setPaused(physics.isPaused());
   },
+  onStep: () => {
+    if (physics.isPaused()) physics.stepOnce();
+  },
   onMotorSpeedChange: (speed) => {
     const joint = input.selection.selectedJoint;
     if (joint) setJointMotor(joint, speed);
@@ -150,6 +153,7 @@ const input = setupInput({
 });
 
 ui.setPaused(physics.isPaused());
+physics.onAfterRender(() => ui.setClock(physics.getStepCount(), physics.getSimTime()));
 
 // Scene save / load -------------------------------------------------------------------------
 
@@ -222,6 +226,7 @@ async function saveScene(asNew: boolean): Promise<void> {
 
 function resetEditor(): void {
   physics.pause();
+  physics.resetClock();
   input.selection.deselect();
   ui.setPaused(true);
 }

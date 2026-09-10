@@ -89,6 +89,14 @@ export interface Physics {
   /** Resume stepping the simulation. */
   play(): void;
   isPaused(): boolean;
+  /** Advance the world by one fixed timestep (used while paused). */
+  stepOnce(): void;
+  /** Completed physics steps since the last reset. */
+  getStepCount(): number;
+  /** Simulated seconds = steps × 1/60. */
+  getSimTime(): number;
+  /** Zero the step counter (clear / load scene). */
+  resetClock(): void;
   onAfterRender(cb: AfterRender): void;
   bodyAt(point: Point): Body | null;
   /** Nearest scene joint whose drawing is within ~10 screen px. */
@@ -223,6 +231,7 @@ export function createPhysics(container: HTMLElement): Physics {
   let lastDpr = 0;
   let background = DEFAULT_BACKGROUND;
   let paused = false;
+  let stepCount = 0;
   let wrapEnabled = false;
   let size = { w: 1, h: 1 };
   let zoom = 1;
@@ -658,15 +667,21 @@ export function createPhysics(container: HTMLElement): Physics {
 
   let last = performance.now();
   let acc = 0;
+
+  function advanceStep(): void {
+    if (wrapEnabled) ghosts.sync(size);
+    world.step(STEP, VELOCITY_ITERATIONS, POSITION_ITERATIONS);
+    if (wrapEnabled) ghosts.apply(STEP);
+    stepCount += 1;
+  }
+
   function tick(now: number): void {
     const dt = Math.min((now - last) / 1000, 0.05);
     last = now;
     if (!paused) {
       acc += dt;
       while (acc >= STEP) {
-        if (wrapEnabled) ghosts.sync(size);
-        world.step(STEP, VELOCITY_ITERATIONS, POSITION_ITERATIONS);
-        if (wrapEnabled) ghosts.apply(STEP);
+        advanceStep();
         acc -= STEP;
       }
     }
@@ -859,6 +874,14 @@ export function createPhysics(container: HTMLElement): Physics {
       acc = 0;
     },
     isPaused: () => paused,
+    stepOnce(): void {
+      advanceStep();
+    },
+    getStepCount: () => stepCount,
+    getSimTime: () => stepCount * STEP,
+    resetClock(): void {
+      stepCount = 0;
+    },
     onAfterRender(cb: AfterRender): void {
       afterRender.push(cb);
     },

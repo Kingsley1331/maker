@@ -638,6 +638,85 @@ body {
   background: #343a45;
 }
 
+.icon-btn.is-active {
+  background: #3b6fe0;
+  border-color: #5f8cf0;
+}
+
+.sim-hud {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 12px;
+  color: #e6e6e6;
+  background: rgba(30, 33, 40, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: auto;
+}
+
+.sim-hud[hidden] {
+  display: none;
+}
+
+.hud-readout {
+  white-space: nowrap;
+}
+
+.hud-sep {
+  margin: 0 4px;
+  color: #9aa3b2;
+}
+
+.hud-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: #e6e6e6;
+  background: #2a2f38;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.hud-btn svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+  pointer-events: none;
+}
+
+.hud-btn:hover {
+  background: #343a45;
+}
+
+.hud-btn .hud-icon-play {
+  display: none;
+}
+
+.hud-btn.is-paused .hud-icon-pause {
+  display: none;
+}
+
+.hud-btn.is-paused .hud-icon-play {
+  display: block;
+}
+
+.hud-btn[hidden] {
+  display: none;
+}
+
 /* Help modal */
 dialog.help:not([open]) {
   display: none;
