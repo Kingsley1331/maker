@@ -100,6 +100,14 @@ const ui = setupUi({
       if (data) data.fillStyle = color;
     }
   },
+  onStreamChange: (stream) => {
+    for (const body of input.selection.members) {
+      const data = getBodyData(body);
+      if (!data || data.kind !== "shape") continue;
+      data.stream = stream ? { ...stream } : undefined;
+      body.setAwake(true);
+    }
+  },
   onZoomChange: (zoom) => physics.setZoom(zoom),
   onToolChange: (tool) => {
     if (tool.kind === "zoom") input.selection.deselect();

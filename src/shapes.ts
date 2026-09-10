@@ -48,6 +48,25 @@ export type { Point };
 /** `ghost`: invisible wrap-mode mirror of a shape (see wrap-ghosts.ts); never pickable or drawn. */
 export type BodyKind = "shape" | "wall" | "ground" | "ghost";
 
+/**
+ * A stream of tiny particles hitting the shape from one direction. Each particle is a linear
+ * impulse applied at the point where a ray travelling in `angleDeg` first meets the shape.
+ */
+export interface ParticleStream {
+  /** Direction the particles travel, degrees (0 = rightwards, 90 = downwards on screen). */
+  angleDeg: number;
+  /** Impulse per particle, N·s. */
+  intensity: number;
+  /** Particles per second. */
+  frequency: number;
+}
+
+export const DEFAULT_STREAM: Readonly<ParticleStream> = {
+  angleDeg: 0,
+  intensity: 0.1,
+  frequency: 60,
+};
+
 export interface BodyUserData {
   kind: BodyKind;
   label: string;
@@ -58,6 +77,8 @@ export interface BodyUserData {
   holes?: Point[][];
   /** When set, this body ignores the global elasticity slider. */
   restitutionOverride?: number;
+  /** When set, the shape is peppered with impulses from this direction while the sim runs. */
+  stream?: ParticleStream;
 }
 
 export interface ShapePreview {
@@ -732,6 +753,7 @@ export function cloneBodyData(data: BodyUserData | undefined): BodyUserData {
   if (data.outline) copy.outline = data.outline.map((p) => ({ x: p.x, y: p.y }));
   if (data.holes) copy.holes = data.holes.map((ring) => ring.map((p) => ({ x: p.x, y: p.y })));
   if (data.restitutionOverride !== undefined) copy.restitutionOverride = data.restitutionOverride;
+  if (data.stream) copy.stream = { ...data.stream };
   return copy;
 }
 

@@ -28,12 +28,18 @@ import {
   type BodyUserData,
   type JointUserData,
 } from "./shapes";
+import { HIT_FADE_SECONDS, recentHits, stepParticleStreams, streamArrow } from "./particle-stream";
 import { GRAVITY_SCALE, toMeters, toPixels, vecToMeters, vecToPixels, type Point } from "./units";
 import { createWrapGhosts } from "./wrap-ghosts";
 
 const WALL_THICKNESS = 200;
 const WALL_FILL = "#22262e";
 const JOINT_ACCENT = "#3b6fe0";
+const STREAM_ACCENT = "#e0762b";
+/** Gap between a stream's direction arrow and the shape, and the arrow's length (world px). */
+const STREAM_ARROW_GAP_PX = 10;
+const STREAM_ARROW_LENGTH_PX = 26;
+const STREAM_HIT_RADIUS_PX = 2.5;
 /** Click distance to a drawn edge, in screen pixels. */
 const EDGE_HIT_PX = 8;
 /** Drawn thickness of an edge segment, in world pixels. */
@@ -608,6 +614,54 @@ export function createPhysics(container: HTMLElement): Physics {
     ctx.restore();
   }
 
+  /** Direction arrow for a shape's particle stream, drawn just upstream of the shape. */
+  function drawStreamArrow(body: Body, data: BodyUserData): void {
+    if (!data.stream) return;
+    const arrow = streamArrow(body, data.stream, toMeters(STREAM_ARROW_GAP_PX), toMeters(STREAM_ARROW_LENGTH_PX));
+    if (!arrow) return;
+    const tail = vecToPixels(arrow.tail);
+    const head = vecToPixels(arrow.head);
+    const dx = head.x - tail.x;
+    const dy = head.y - tail.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) return;
+    const ux = dx / len;
+    const uy = dy / len;
+    const wing = 6;
+    ctx.save();
+    ctx.strokeStyle = STREAM_ACCENT;
+    ctx.fillStyle = STREAM_ACCENT;
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(tail.x, tail.y);
+    ctx.lineTo(head.x - ux * wing, head.y - uy * wing);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(head.x, head.y);
+    ctx.lineTo(head.x - ux * wing * 1.6 - uy * wing * 0.8, head.y - uy * wing * 1.6 + ux * wing * 0.8);
+    ctx.lineTo(head.x - ux * wing * 1.6 + uy * wing * 0.8, head.y - uy * wing * 1.6 - ux * wing * 0.8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /** Fading dots where particles struck during the last few steps. */
+  function drawStreamHits(): void {
+    const hits = recentHits();
+    if (hits.length === 0) return;
+    ctx.save();
+    ctx.fillStyle = STREAM_ACCENT;
+    for (const hit of hits) {
+      const p = vecToPixels(hit.point);
+      ctx.globalAlpha = Math.max(0, 1 - hit.age / HIT_FADE_SECONDS) * 0.9;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, STREAM_HIT_RADIUS_PX, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   function paint(): void {
     ctx.fillStyle = background;
     ctx.fillRect(0, 0, size.w, size.h);
@@ -659,6 +713,14 @@ export function createPhysics(container: HTMLElement): Physics {
         if (b && !copyInView(b.min, b.max, o, view)) continue;
         drawJoint(joint);
       }
+      for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
+        const data = getBodyData(body);
+        if (!data || data.kind !== "shape" || !data.stream) continue;
+        const b = bodyBounds.get(body);
+        if (b && !copyInView(b.min, b.max, o, view)) continue;
+        drawStreamArrow(body, data);
+      }
+      drawStreamHits();
       ctx.restore();
     }
     for (const cb of afterRender) cb(ctx);
@@ -670,6 +732,7 @@ export function createPhysics(container: HTMLElement): Physics {
 
   function advanceStep(): void {
     if (wrapEnabled) ghosts.sync(size);
+    stepParticleStreams(world, STEP);
     world.step(STEP, VELOCITY_ITERATIONS, POSITION_ITERATIONS);
     if (wrapEnabled) ghosts.apply(STEP);
     stepCount += 1;

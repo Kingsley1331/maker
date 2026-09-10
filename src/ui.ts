@@ -20,6 +20,7 @@ import { bodyLabel, groupBoundsPx } from "./group";
 import { bodyBoundsPx, MAX_ZOOM, MIN_ZOOM } from "./physics";
 import {
   DEFAULT_FILL,
+  DEFAULT_STREAM,
   DEFAULT_WALL_THICKNESS,
   getBodyData,
   getBodyRestitution,
@@ -27,6 +28,7 @@ import {
   MIN_WALL_THICKNESS,
   SHAPE_TYPES,
   type JointUserData,
+  type ParticleStream,
   type ShapeType,
 } from "./shapes";
 import { FRICTION, LINEAR_DAMPING, RESTITUTION, toPixels } from "./units";
@@ -71,6 +73,11 @@ export interface UiOptions {
   /** Angular velocity in degrees per second. */
   onSpinChange(degPerSec: number): void;
   onColorChange(color: string): void;
+  /**
+   * Called when the particle stream checkbox or one of its sliders changes for the current
+   * selection: the new settings, or null to turn the stream off.
+   */
+  onStreamChange(stream: ParticleStream | null): void;
   /** View zoom. 1 is identity; the slider and keyboard omit a cursor anchor. */
   onZoomChange(zoom: number): void;
   /** Fired when the shape, joint, or zoom tool changes. */
@@ -185,6 +192,7 @@ export function setupUi({
   onVelocityChange,
   onSpinChange,
   onColorChange,
+  onStreamChange,
   onZoomChange,
   onToolChange,
   onDeleteSelection,
@@ -843,6 +851,66 @@ export function setupUi({
 
   selectionColor.addEventListener("input", () => onColorChange(selectionColor.value));
 
+  // Particle stream
+  const streamEnabled = requireElement<HTMLInputElement>("stream-enabled");
+  const streamControls = requireElement<HTMLDivElement>("stream-controls");
+  const streamAngle = requireElement<HTMLInputElement>("stream-angle");
+  const streamAngleValue = requireElement<HTMLOutputElement>("stream-angle-value");
+  const streamIntensity = requireElement<HTMLInputElement>("stream-intensity");
+  const streamIntensityValue = requireElement<HTMLOutputElement>("stream-intensity-value");
+  const streamFrequency = requireElement<HTMLInputElement>("stream-frequency");
+  const streamFrequencyValue = requireElement<HTMLOutputElement>("stream-frequency-value");
+
+  function readStreamSliders(): ParticleStream {
+    const angleDeg = Number(streamAngle.value);
+    const intensity = Number(streamIntensity.value);
+    const frequency = Number(streamFrequency.value);
+    return {
+      angleDeg: Number.isFinite(angleDeg) ? angleDeg : DEFAULT_STREAM.angleDeg,
+      intensity: Number.isFinite(intensity) ? intensity : DEFAULT_STREAM.intensity,
+      frequency: Number.isFinite(frequency) ? frequency : DEFAULT_STREAM.frequency,
+    };
+  }
+
+  function showStreamValues(stream: ParticleStream): void {
+    streamAngleValue.textContent = `${Math.round(stream.angleDeg)}\u00B0`;
+    streamIntensityValue.textContent = stream.intensity.toFixed(2);
+    streamFrequencyValue.textContent = `${Math.round(stream.frequency)} /s`;
+  }
+
+  /** Write a stream (or the defaults) into the sliders without disturbing one being dragged. */
+  function syncStreamControls(stream: ParticleStream | undefined): void {
+    const on = stream !== undefined;
+    if (document.activeElement !== streamEnabled && streamEnabled.checked !== on) {
+      streamEnabled.checked = on;
+    }
+    streamControls.hidden = !on;
+    const values = stream ?? DEFAULT_STREAM;
+    setIfUnfocused(streamAngle, String(values.angleDeg));
+    setIfUnfocused(streamIntensity, String(values.intensity));
+    setIfUnfocused(streamFrequency, String(values.frequency));
+    showStreamValues(readStreamSliders());
+  }
+
+  function emitStream(): void {
+    const stream = readStreamSliders();
+    showStreamValues(stream);
+    onStreamChange(stream);
+  }
+
+  streamEnabled.addEventListener("change", () => {
+    if (streamEnabled.checked) {
+      streamControls.hidden = false;
+      emitStream();
+    } else {
+      streamControls.hidden = true;
+      onStreamChange(null);
+    }
+  });
+  streamAngle.addEventListener("input", emitStream);
+  streamIntensity.addEventListener("input", emitStream);
+  streamFrequency.addEventListener("input", emitStream);
+
   const selectionDuplicate = requireElement<HTMLButtonElement>("selection-duplicate");
   const selectionDelete = requireElement<HTMLButtonElement>("selection-delete");
   bindActivate(selectionDuplicate, () => {
@@ -888,6 +956,7 @@ export function setupUi({
       const hex = toColorInput(fill);
       if (selectionColor.value !== hex) selectionColor.value = hex;
     }
+    syncStreamControls(getBodyData(body)?.stream);
   }
 
   // Selected joint motor
