@@ -3,13 +3,17 @@ import {
   FULL_RANGE_DEG,
   FULL_TRAVEL_PX,
   getAngleRangeDeg,
+  getJointDamping,
+  getJointFrequency,
   getMotorSpeed,
   getTravelRangePx,
   hasAngleLimit,
+  hasSpring,
   hasTravelLimit,
   isMotorJoint,
   jointKindLabel,
   JOINT_TYPES,
+  MAX_SPRING_HZ,
   type JointType,
 } from "./joints";
 import { bodyLabel, groupBoundsPx } from "./group";
@@ -49,6 +53,10 @@ export interface UiOptions {
   onMotorRangeChange(value: number): void;
   /** Called when the slider Collide checkbox is toggled. */
   onSliderCollideChange(collide: boolean): void;
+  /** Called when the rod / weld stiffness slider moves (Hz; 0 is rigid). */
+  onJointStiffnessChange(hz: number): void;
+  /** Called when the rod / weld damping slider moves. */
+  onJointDampingChange(ratio: number): void;
   /** Called when the Static / Dynamic / Kinematic control is used on the current selection. */
   onBodyTypeChange(type: BodyType): void;
   onMassChange(mass: number): void;
@@ -159,6 +167,8 @@ export function setupUi({
   onMotorSpeedChange,
   onMotorRangeChange,
   onSliderCollideChange,
+  onJointStiffnessChange,
+  onJointDampingChange,
   onBodyTypeChange,
   onMassChange,
   onElasticityChange,
@@ -851,6 +861,12 @@ export function setupUi({
   const motorRangeValue = requireElement<HTMLOutputElement>("motor-range-value");
   const motorCollideRow = requireElement<HTMLLabelElement>("motor-collide-row");
   const motorCollide = requireElement<HTMLInputElement>("motor-collide");
+  const jointStiffnessRow = requireElement<HTMLLabelElement>("joint-stiffness-row");
+  const jointStiffness = requireElement<HTMLInputElement>("joint-stiffness");
+  const jointStiffnessValue = requireElement<HTMLOutputElement>("joint-stiffness-value");
+  const jointDampingRow = requireElement<HTMLLabelElement>("joint-damping-row");
+  const jointDamping = requireElement<HTMLInputElement>("joint-damping");
+  const jointDampingValue = requireElement<HTMLOutputElement>("joint-damping-value");
 
   /** What the Range slider currently edits: hinge angle (degrees) or slider travel (pixels). */
   let rangeUnit: "degrees" | "pixels" = "degrees";
@@ -867,6 +883,17 @@ export function setupUi({
     } else {
       motorRangeValue.textContent = `${Math.round(value)}\u00B0`;
     }
+  }
+
+  function showJointStiffness(hz: number): void {
+    jointStiffness.value = String(hz);
+    jointStiffness.max = String(MAX_SPRING_HZ);
+    jointStiffnessValue.textContent = hz <= 0 ? "Rigid" : `${hz.toFixed(1)} Hz`;
+  }
+
+  function showJointDamping(ratio: number): void {
+    jointDamping.value = String(ratio);
+    jointDampingValue.textContent = ratio.toFixed(2);
   }
 
   /** Point the Range row at the joint's limit: angle for pin / revolute, travel for sliders. */
@@ -908,6 +935,13 @@ export function setupUi({
     if (!motorRangeRow.hidden) configureRangeRow(joint);
     motorCollideRow.hidden = !hasTravelLimit(joint);
     motorCollide.checked = hasTravelLimit(joint) && joint.getCollideConnected();
+    const spring = hasSpring(joint);
+    jointStiffnessRow.hidden = !spring;
+    if (spring) {
+      showJointStiffness(getJointFrequency(joint));
+      showJointDamping(getJointDamping(joint));
+    }
+    jointDampingRow.hidden = !spring || getJointFrequency(joint) <= 0;
   }
 
   motorSpeed.addEventListener("input", () => {
@@ -924,6 +958,19 @@ export function setupUi({
 
   motorCollide.addEventListener("change", () => {
     onSliderCollideChange(motorCollide.checked);
+  });
+
+  jointStiffness.addEventListener("input", () => {
+    const hz = parseFloat(jointStiffness.value);
+    showJointStiffness(hz);
+    jointDampingRow.hidden = hz <= 0;
+    onJointStiffnessChange(hz);
+  });
+
+  jointDamping.addEventListener("input", () => {
+    const ratio = parseFloat(jointDamping.value);
+    showJointDamping(ratio);
+    onJointDampingChange(ratio);
   });
 
   return {

@@ -325,6 +325,14 @@
           <span class="label"><span id="motor-range-label">Range</span> <output id="motor-range-value">360°</output></span>
           <input id="motor-range" type="range" min="0" max="360" step="5" value="360" />
         </label>
+        <label class="slider" id="joint-stiffness-row" for="joint-stiffness" hidden>
+          <span class="label">Stiffness <output id="joint-stiffness-value">Rigid</output></span>
+          <input id="joint-stiffness" type="range" min="0" max="20" step="0.5" value="0" />
+        </label>
+        <label class="slider" id="joint-damping-row" for="joint-damping" hidden>
+          <span class="label">Damping <output id="joint-damping-value">0.70</output></span>
+          <input id="joint-damping" type="range" min="0" max="2" step="0.05" value="0.7" />
+        </label>
         <label class="check-row" id="motor-collide-row" for="motor-collide" hidden title="When on, the two shapes can bump into each other through the slider">
           <span class="label">Collide</span>
           <input id="motor-collide" type="checkbox" />
@@ -520,12 +528,19 @@
             that line, without spinning. Check Collide on a selected slider if the two shapes should
             bump into each other.
           </li>
+          <li>
+            <strong>Springy rod and weld:</strong> select a rod or weld and raise Stiffness to make it
+            springy (0 stays rigid). Damping appears once stiffness is above zero: low values bounce,
+            1 settles quickly. A springy rod stretches and compresses; a springy weld stays glued in
+            place but can twist.
+          </li>
           <li><strong>Cancel:</strong> Escape or a click on empty space cancels a pending second click.</li>
           <li>
             <strong>Motors and limits:</strong> placing a joint selects it (or pause and click its
             drawing). Drag an end onto a new point on the same body to move it. Delete removes the
             joint. Set motor speed on pin, revolute, wheel, and slider; pin and revolute can limit how
-            far they turn, and sliders can limit travel and whether the two shapes collide.
+            far they turn, and sliders can limit travel and whether the two shapes collide. Rod and
+            weld expose Stiffness and Damping.
           </li>
           <li>
             <strong>Zoom:</strong> select the Zoom tool in View first. Then the mouse wheel zooms

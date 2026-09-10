@@ -428,6 +428,10 @@ body {
   display: none;
 }
 
+.check-row[hidden] {
+  display: none;
+}
+
 .slider input[type="range"]:disabled {
   opacity: 0.4;
   pointer-events: none;

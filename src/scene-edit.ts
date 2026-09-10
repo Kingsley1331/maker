@@ -15,11 +15,16 @@ import {
   createWeld,
   createWheel,
   getAngleRangeDeg,
+  getJointDamping,
+  getJointFrequency,
   getMotorSpeed,
   getTravelRangePx,
   hasAngleLimit,
+  hasSpring,
   hasTravelLimit,
   setAngleRange,
+  setJointDamping,
+  setJointFrequency,
   setJointMotor,
   setTravelRange,
 } from "./joints";
@@ -84,6 +89,10 @@ export interface JointBlueprint {
   travelRangePx?: number | null;
   /** When false, the two slider bodies do not collide. Omitted means they do. */
   collideConnected?: boolean;
+  /** Oscillator frequency in Hz for rod / weld; 0 or omitted is rigid. */
+  frequencyHz?: number;
+  /** Damping ratio for rod / weld (0 = none, 1 = critical). */
+  dampingRatio?: number;
 }
 
 /** Read a scene joint into a plain blueprint, or null for joints we cannot rebuild. */
@@ -121,6 +130,10 @@ export function jointBlueprint(joint: Joint): JointBlueprint | null {
     blueprint.axis = { x: axis.x, y: axis.y };
     blueprint.travelRangePx = joint.isLimitEnabled() ? getTravelRangePx(joint) : null;
     blueprint.collideConnected = joint.getCollideConnected();
+  }
+  if (hasSpring(joint)) {
+    blueprint.frequencyHz = getJointFrequency(joint);
+    blueprint.dampingRatio = getJointDamping(joint);
   }
   return blueprint;
 }
@@ -193,6 +206,10 @@ export function buildJoint(
   }
   if (bp.travelRangePx != null && hasTravelLimit(created)) {
     setTravelRange(created, bp.travelRangePx);
+  }
+  if (hasSpring(created)) {
+    if (bp.frequencyHz !== undefined) setJointFrequency(created, bp.frequencyHz);
+    if (bp.dampingRatio !== undefined) setJointDamping(created, bp.dampingRatio);
   }
   return created;
 }

@@ -11,7 +11,7 @@ import {
   World,
 } from "planck";
 import { connectedBodies, translateGroup } from "./group";
-import { getAngleLimitArc, getTravelLimitSegment, jointDrawEndsPx, jointEndHit, jointSelectDistPx, MOTOR_JOINT_HIT_PX, type JointEnd } from "./joints";
+import { getAngleLimitArc, getJointFrequency, getTravelLimitSegment, jointDrawEndsPx, jointEndHit, jointSelectDistPx, MOTOR_JOINT_HIT_PX, type JointEnd } from "./joints";
 import {
   FIXTURE,
   getBodyData,
@@ -452,6 +452,31 @@ export function createPhysics(container: HTMLElement): Physics {
     }
   }
 
+  /** Zigzag along a rod so a springy distance joint is not confused with a rigid bar. */
+  function strokeSpring(x1: number, y1: number, x2: number, y2: number): void {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len = Math.hypot(dx, dy);
+    if (len < 8) {
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      return;
+    }
+    const ux = dx / len;
+    const uy = dy / len;
+    const nx = -uy;
+    const ny = ux;
+    const coils = Math.max(6, Math.round(len / 8));
+    const amp = 4;
+    ctx.moveTo(x1, y1);
+    for (let i = 1; i < coils; i++) {
+      const t = i / coils;
+      const side = i % 2 === 0 ? 1 : -1;
+      ctx.lineTo(x1 + ux * len * t + nx * amp * side, y1 + uy * len * t + ny * amp * side);
+    }
+    ctx.lineTo(x2, y2);
+  }
+
   function drawJoint(joint: Joint): void {
     if (joint.getType() === MouseJoint.TYPE) return;
     const data = joint.getUserData() as JointUserData | undefined;
@@ -484,8 +509,12 @@ export function createPhysics(container: HTMLElement): Physics {
       }
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
+      if (data.kind === "rod" && getJointFrequency(joint) > 0) {
+        strokeSpring(x1, y1, x2, y2);
+      } else {
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+      }
       ctx.stroke();
       ctx.beginPath();
       ctx.arc(x2, y2, 3.5, 0, Math.PI * 2);

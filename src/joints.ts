@@ -38,6 +38,56 @@ export function motorJointLabel(kind: MotorJointType): string {
   return jointKindLabel(kind);
 }
 
+/** Slider max for rod / weld stiffness (Hz). Stay under half the 60 Hz step. */
+export const MAX_SPRING_HZ = 20;
+
+/** Default damping so raising stiffness is not undamped. Matches wheel suspension. */
+export const DEFAULT_SPRING_DAMPING = 0.7;
+
+type SoftJoint = DistanceJoint | WeldJoint;
+
+function asSoftJoint(joint: Joint): SoftJoint | null {
+  const type = joint.getType();
+  if (type === DistanceJoint.TYPE || type === WeldJoint.TYPE) return joint as SoftJoint;
+  return null;
+}
+
+/** Rod (linear spring) and weld (torsional spring) expose frequency / damping. */
+export function hasSpring(joint: Joint): boolean {
+  const data = joint.getUserData() as JointUserData | undefined;
+  return data?.kind === "rod" || data?.kind === "weld";
+}
+
+/** Oscillator frequency in Hz, or 0 when the joint is rigid / has no spring. */
+export function getJointFrequency(joint: Joint): number {
+  if (!hasSpring(joint)) return 0;
+  return asSoftJoint(joint)?.getFrequency() ?? 0;
+}
+
+/** Damping ratio (0 = none, 1 = critical), or the default when the joint has no spring. */
+export function getJointDamping(joint: Joint): number {
+  if (!hasSpring(joint)) return DEFAULT_SPRING_DAMPING;
+  return asSoftJoint(joint)?.getDampingRatio() ?? DEFAULT_SPRING_DAMPING;
+}
+
+/** Set rod / weld stiffness. 0 is rigid. Wakes both bodies. */
+export function setJointFrequency(joint: Joint, hz: number): void {
+  const soft = hasSpring(joint) ? asSoftJoint(joint) : null;
+  if (!soft) return;
+  soft.setFrequency(Math.max(0, Math.min(MAX_SPRING_HZ, hz)));
+  joint.getBodyA().setAwake(true);
+  joint.getBodyB().setAwake(true);
+}
+
+/** Set rod / weld damping ratio. Wakes both bodies. */
+export function setJointDamping(joint: Joint, ratio: number): void {
+  const soft = hasSpring(joint) ? asSoftJoint(joint) : null;
+  if (!soft) return;
+  soft.setDampingRatio(Math.max(0, Math.min(2, ratio)));
+  joint.getBodyA().setAwake(true);
+  joint.getBodyB().setAwake(true);
+}
+
 type MotorJoint = RevoluteJoint | WheelJoint | PrismaticJoint;
 
 interface AnchoredJoint extends Joint {
@@ -416,7 +466,12 @@ export function createRod(
 ): Joint | null {
   return world.createJoint(
     new DistanceJoint(
-      { collideConnected: true, frequencyHz: 0, userData: { kind: "rod" } satisfies JointUserData },
+      {
+        collideConnected: true,
+        frequencyHz: 0,
+        dampingRatio: DEFAULT_SPRING_DAMPING,
+        userData: { kind: "rod" } satisfies JointUserData,
+      },
       bodyA,
       bodyB,
       vecToMeters(pointA),
@@ -446,6 +501,7 @@ export function createWeld(
       {
         collideConnected: true,
         frequencyHz: 0,
+        dampingRatio: DEFAULT_SPRING_DAMPING,
         userData: { kind: "weld", localA, localB } satisfies JointUserData,
       },
       bodyA,

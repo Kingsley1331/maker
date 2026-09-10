@@ -1,6 +1,6 @@
 import { createPhysics } from "./physics";
 import { setupInput } from "./input";
-import { setJointMotor, setJointRange } from "./joints";
+import { setJointDamping, setJointFrequency, setJointMotor, setJointRange } from "./joints";
 import { deleteSelection, duplicateSelection, setPrismaticCollide } from "./scene-edit";
 import {
   clearScene,
@@ -55,6 +55,14 @@ const ui = setupUi({
     const created = setPrismaticCollide(physics.world, physics.ground, joint, collide);
     if (created) input.selection.selectJoint(created);
     else input.selection.deselect();
+  },
+  onJointStiffnessChange: (hz) => {
+    const joint = input.selection.selectedJoint;
+    if (joint) setJointFrequency(joint, hz);
+  },
+  onJointDampingChange: (ratio) => {
+    const joint = input.selection.selectedJoint;
+    if (joint) setJointDamping(joint, ratio);
   },
   onBodyTypeChange: (type) => {
     for (const body of input.selection.members) {
