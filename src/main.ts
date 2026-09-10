@@ -140,6 +140,7 @@ const input = setupInput({
     ui.showMotorInfo(joint);
   },
   onZoomChange: (zoom) => ui.setZoom(zoom),
+  clearTool: () => ui.setActiveTool({ kind: "none" }),
   onAfterRender: (cb) => physics.onAfterRender(cb),
   bodyAt: (point) => physics.bodyAt(point),
   jointAt: (point) => physics.jointAt(point),

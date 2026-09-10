@@ -128,6 +128,8 @@ export interface Ui {
   showSelectionInfo(body: Body | null, members?: readonly Body[]): void;
   /** Show (or hide, when null) the motor slider for the currently selected joint. */
   showMotorInfo(joint: Joint | null): void;
+  /** Switch the active shape / joint / zoom tool (or none). */
+  setActiveTool(tool: ActiveTool): void;
   /** Reflect the current paused state on the toggle button. */
   setPaused(paused: boolean): void;
   /** Keep the Zoom slider in sync with wheel / other non-slider changes. */
@@ -198,6 +200,8 @@ export function setupUi({
     pauseButton.textContent = paused ? "Play" : "Pause";
     pauseButton.setAttribute("aria-pressed", String(paused));
     pauseButton.classList.toggle("is-paused", paused);
+    if (!paused && activeTool.kind === "joint") setActiveTool({ kind: "none" });
+    else syncToolButtons();
   }
 
   bindActivate(pauseButton, () => onPauseToggle(!paused));
@@ -370,6 +374,7 @@ export function setupUi({
   });
 
   function setActiveTool(tool: ActiveTool): void {
+    if (tool.kind === "joint" && !paused) return;
     activeTool = tool;
     if (!sprayAllowed(tool)) spray = false;
     if (!chainAllowed(tool)) chain = false;
@@ -393,9 +398,10 @@ export function setupUi({
       );
     }
     for (const button of jointButtons) {
+      button.disabled = !paused;
       button.classList.toggle(
         "is-active",
-        activeTool.kind === "joint" && button.dataset.joint === activeTool.joint,
+        paused && activeTool.kind === "joint" && button.dataset.joint === activeTool.joint,
       );
     }
   }
@@ -453,6 +459,7 @@ export function setupUi({
 
   for (const button of jointButtons) {
     bindActivate(button, () => {
+      if (!paused) return;
       const joint = button.dataset.joint;
       if (!isJointType(joint)) return;
       if (activeTool.kind === "joint" && activeTool.joint === joint) {
@@ -987,6 +994,7 @@ export function setupUi({
     getWallThickness,
     showSelectionInfo,
     showMotorInfo,
+    setActiveTool,
     setPaused,
     setZoom: showZoom,
   };

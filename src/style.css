@@ -354,12 +354,13 @@ body {
 }
 
 .shape-btn:hover,
-.joint-btn:hover,
+.joint-btn:hover:not(:disabled),
 .view-btn:hover:not(:disabled) {
   background: #343a45;
 }
 
-.view-btn:disabled {
+.view-btn:disabled,
+.joint-btn:disabled {
   opacity: 0.4;
   cursor: default;
 }

@@ -79,6 +79,8 @@ export interface InputOptions {
   onSelectionUpdate(body: Body | null, members: Body[]): void;
   onJointSelectionUpdate(joint: Joint | null): void;
   onZoomChange(zoom: number): void;
+  /** Turn off the current shape / joint / zoom tool. */
+  clearTool(): void;
   onAfterRender(cb: AfterRender): void;
   bodyAt(point: Point): Body | null;
   jointAt(point: Point): Joint | null;
@@ -116,6 +118,7 @@ export function setupInput({
   onSelectionUpdate,
   onJointSelectionUpdate,
   onZoomChange,
+  clearTool,
   onAfterRender,
   bodyAt,
   jointAt,
@@ -681,6 +684,12 @@ export function setupInput({
 
   canvas.addEventListener("dblclick", (event) => {
     event.preventDefault();
+    if (jointType()) {
+      clearJointAnchor();
+      clearTool();
+      applyCursor();
+      return;
+    }
     if (!isDraftTool()) return;
 
     if (draft.length >= 2) {
@@ -904,7 +913,7 @@ export function setupInput({
       endGrab();
 
     if (type && !clickOnlyDeselects) {
-      if (isPaused() && isClick) {
+      if (isPaused() && isClick && event.detail === 1) {
         if (!pressedBody) {
           clearJointAnchor();
         } else {
