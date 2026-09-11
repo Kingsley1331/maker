@@ -22,11 +22,13 @@ import {
   DEFAULT_FILL,
   DEFAULT_STREAM,
   DEFAULT_WALL_THICKNESS,
+  DEFAULT_WIND,
   getBodyData,
   getBodyRestitution,
   isPrimitiveShape,
   MIN_WALL_THICKNESS,
   SHAPE_TYPES,
+  type DirectionalForce,
   type JointUserData,
   type ParticleStream,
   type ShapeType,
@@ -78,6 +80,11 @@ export interface UiOptions {
    * selection: the new settings, or null to turn the stream off.
    */
   onStreamChange(stream: ParticleStream | null): void;
+  /**
+   * Called when the directional force checkbox or one of its sliders changes for the current
+   * selection: the new settings, or null to turn the force off.
+   */
+  onWindChange(wind: DirectionalForce | null): void;
   /** View zoom. 1 is identity; the slider and keyboard omit a cursor anchor. */
   onZoomChange(zoom: number): void;
   /** Fired when the shape, joint, or zoom tool changes. */
@@ -193,6 +200,7 @@ export function setupUi({
   onSpinChange,
   onColorChange,
   onStreamChange,
+  onWindChange,
   onZoomChange,
   onToolChange,
   onDeleteSelection,
@@ -851,65 +859,87 @@ export function setupUi({
 
   selectionColor.addEventListener("input", () => onColorChange(selectionColor.value));
 
-  // Particle stream
-  const streamEnabled = requireElement<HTMLInputElement>("stream-enabled");
-  const streamControls = requireElement<HTMLDivElement>("stream-controls");
-  const streamAngle = requireElement<HTMLInputElement>("stream-angle");
-  const streamAngleValue = requireElement<HTMLOutputElement>("stream-angle-value");
-  const streamIntensity = requireElement<HTMLInputElement>("stream-intensity");
-  const streamIntensityValue = requireElement<HTMLOutputElement>("stream-intensity-value");
-  const streamFrequency = requireElement<HTMLInputElement>("stream-frequency");
-  const streamFrequencyValue = requireElement<HTMLOutputElement>("stream-frequency-value");
+  /**
+   * A per-selection feature that a checkbox turns on (with defaults) and a few sliders tune.
+   * `fields` maps each setting key to its slider id and how to print the value.
+   */
+  function bindToggledSliders<T extends { [K in keyof T]: number }>(
+    prefix: string,
+    defaults: Readonly<T>,
+    fields: { [K in keyof T]: { id: string; format(value: number): string } },
+    onChange: (value: T | null) => void,
+  ): (value: T | undefined) => void {
+    const enabled = requireElement<HTMLInputElement>(`${prefix}-enabled`);
+    const controls = requireElement<HTMLDivElement>(`${prefix}-controls`);
+    const keys = Object.keys(fields) as (keyof T)[];
+    const inputs = {} as Record<keyof T, HTMLInputElement>;
+    const outputs = {} as Record<keyof T, HTMLOutputElement>;
+    for (const key of keys) {
+      inputs[key] = requireElement<HTMLInputElement>(fields[key].id);
+      outputs[key] = requireElement<HTMLOutputElement>(`${fields[key].id}-value`);
+    }
 
-  function readStreamSliders(): ParticleStream {
-    const angleDeg = Number(streamAngle.value);
-    const intensity = Number(streamIntensity.value);
-    const frequency = Number(streamFrequency.value);
-    return {
-      angleDeg: Number.isFinite(angleDeg) ? angleDeg : DEFAULT_STREAM.angleDeg,
-      intensity: Number.isFinite(intensity) ? intensity : DEFAULT_STREAM.intensity,
-      frequency: Number.isFinite(frequency) ? frequency : DEFAULT_STREAM.frequency,
+    function read(): T {
+      const out = {} as Record<keyof T, number>;
+      for (const key of keys) {
+        const value = Number(inputs[key].value);
+        out[key] = Number.isFinite(value) ? value : defaults[key];
+      }
+      return out as T;
+    }
+
+    function show(value: T): void {
+      for (const key of keys) outputs[key].textContent = fields[key].format(value[key]);
+    }
+
+    function emit(): void {
+      const value = read();
+      show(value);
+      onChange(value);
+    }
+
+    enabled.addEventListener("change", () => {
+      controls.hidden = !enabled.checked;
+      if (enabled.checked) emit();
+      else onChange(null);
+    });
+    for (const key of keys) inputs[key].addEventListener("input", emit);
+
+    /** Write a value (or the defaults) into the controls without disturbing one being dragged. */
+    return (value) => {
+      const on = value !== undefined;
+      if (document.activeElement !== enabled && enabled.checked !== on) enabled.checked = on;
+      controls.hidden = !on;
+      const values = value ?? defaults;
+      for (const key of keys) setIfUnfocused(inputs[key], String(values[key]));
+      show(read());
     };
   }
 
-  function showStreamValues(stream: ParticleStream): void {
-    streamAngleValue.textContent = `${Math.round(stream.angleDeg)}\u00B0`;
-    streamIntensityValue.textContent = stream.intensity.toFixed(2);
-    streamFrequencyValue.textContent = `${Math.round(stream.frequency)} /s`;
-  }
+  const degrees = (value: number): string => `${Math.round(value)}\u00B0`;
 
-  /** Write a stream (or the defaults) into the sliders without disturbing one being dragged. */
-  function syncStreamControls(stream: ParticleStream | undefined): void {
-    const on = stream !== undefined;
-    if (document.activeElement !== streamEnabled && streamEnabled.checked !== on) {
-      streamEnabled.checked = on;
-    }
-    streamControls.hidden = !on;
-    const values = stream ?? DEFAULT_STREAM;
-    setIfUnfocused(streamAngle, String(values.angleDeg));
-    setIfUnfocused(streamIntensity, String(values.intensity));
-    setIfUnfocused(streamFrequency, String(values.frequency));
-    showStreamValues(readStreamSliders());
-  }
+  // Particle stream
+  const syncStreamControls = bindToggledSliders<ParticleStream>(
+    "stream",
+    DEFAULT_STREAM,
+    {
+      angleDeg: { id: "stream-angle", format: degrees },
+      intensity: { id: "stream-intensity", format: (v) => v.toFixed(2) },
+      frequency: { id: "stream-frequency", format: (v) => `${Math.round(v)} /s` },
+    },
+    onStreamChange,
+  );
 
-  function emitStream(): void {
-    const stream = readStreamSliders();
-    showStreamValues(stream);
-    onStreamChange(stream);
-  }
-
-  streamEnabled.addEventListener("change", () => {
-    if (streamEnabled.checked) {
-      streamControls.hidden = false;
-      emitStream();
-    } else {
-      streamControls.hidden = true;
-      onStreamChange(null);
-    }
-  });
-  streamAngle.addEventListener("input", emitStream);
-  streamIntensity.addEventListener("input", emitStream);
-  streamFrequency.addEventListener("input", emitStream);
+  // Directional force (wind pressure)
+  const syncWindControls = bindToggledSliders<DirectionalForce>(
+    "wind",
+    DEFAULT_WIND,
+    {
+      angleDeg: { id: "wind-angle", format: degrees },
+      force: { id: "wind-force", format: (v) => `${v.toFixed(1)} N/m` },
+    },
+    onWindChange,
+  );
 
   const selectionDuplicate = requireElement<HTMLButtonElement>("selection-duplicate");
   const selectionDelete = requireElement<HTMLButtonElement>("selection-delete");
@@ -956,7 +986,9 @@ export function setupUi({
       const hex = toColorInput(fill);
       if (selectionColor.value !== hex) selectionColor.value = hex;
     }
-    syncStreamControls(getBodyData(body)?.stream);
+    const data = getBodyData(body);
+    syncStreamControls(data?.stream);
+    syncWindControls(data?.wind);
   }
 
   // Selected joint motor

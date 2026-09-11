@@ -1,15 +1,6 @@
-import {
-  Vec2,
-  type Body,
-  type ChainShape,
-  type CircleShape,
-  type EdgeShape,
-  type PolygonShape,
-  type RayCastInput,
-  type RayCastOutput,
-  type World,
-} from "planck";
+import type { Body, World } from "planck";
 import { getBodyData, type ParticleStream } from "./shapes";
+import { directionOf, extentAlong, rayHit, upstreamArrow } from "./surface";
 import type { Point } from "./units";
 
 /** Extra reach past the body's bounds for the incoming ray (meters). */
@@ -50,55 +41,6 @@ function vanDerCorput(index: number): number {
   return result;
 }
 
-/** Projection of the body's silhouette onto `axis` (world space): `[min, max]`. */
-function extentAlong(body: Body, axis: Point): { min: number; max: number } | null {
-  let min = Infinity;
-  let max = -Infinity;
-  const include = (p: Point): void => {
-    const s = p.x * axis.x + p.y * axis.y;
-    if (s < min) min = s;
-    if (s > max) max = s;
-  };
-  for (let f = body.getFixtureList(); f; f = f.getNext()) {
-    const shape = f.getShape();
-    const type = shape.getType();
-    if (type === "circle") {
-      const circle = shape as CircleShape;
-      const c = body.getWorldPoint(circle.getCenter());
-      const r = circle.getRadius();
-      const s = c.x * axis.x + c.y * axis.y;
-      if (s - r < min) min = s - r;
-      if (s + r > max) max = s + r;
-    } else if (type === "polygon") {
-      const poly = shape as PolygonShape;
-      for (let i = 0; i < poly.m_count; i++) include(body.getWorldPoint(poly.m_vertices[i]));
-    } else if (type === "edge") {
-      const edge = shape as EdgeShape;
-      include(body.getWorldPoint(edge.m_vertex1));
-      include(body.getWorldPoint(edge.m_vertex2));
-    } else if (type === "chain") {
-      const chain = shape as ChainShape;
-      for (let i = 0; i < chain.m_count; i++) include(body.getWorldPoint(chain.m_vertices[i]));
-    }
-  }
-  return Number.isFinite(min) ? { min, max } : null;
-}
-
-/** First point where the ray `p1 -> p2` meets any fixture of `body`, or null. */
-function rayHit(body: Body, p1: Point, p2: Point): Point | null {
-  const input: RayCastInput = { p1, p2, maxFraction: 1 };
-  const output: RayCastOutput = { normal: Vec2.zero(), fraction: 0 };
-  let best = Infinity;
-  for (let f = body.getFixtureList(); f; f = f.getNext()) {
-    const children = f.getShape().getChildCount();
-    for (let i = 0; i < children; i++) {
-      if (f.rayCast(output, input, i) && output.fraction < best) best = output.fraction;
-    }
-  }
-  if (!Number.isFinite(best)) return null;
-  return { x: p1.x + (p2.x - p1.x) * best, y: p1.y + (p2.y - p1.y) * best };
-}
-
 function recordHit(point: Point): void {
   if (hits.length >= MAX_HITS) hits.shift();
   hits.push({ point, time: simTime });
@@ -118,8 +60,7 @@ function stepBody(body: Body, stream: ParticleStream, dt: number): void {
   if (count <= 0) return;
   state.acc -= count / frequency;
 
-  const theta = (stream.angleDeg * Math.PI) / 180;
-  const dir = { x: Math.cos(theta), y: Math.sin(theta) };
+  const dir = directionOf(stream.angleDeg);
   const side = { x: -dir.y, y: dir.x };
 
   const extent = extentAlong(body, side);
@@ -132,12 +73,12 @@ function stepBody(body: Body, stream: ParticleStream, dt: number): void {
   // Start every ray on a line upstream of the body, perpendicular to the direction of travel.
   const startAlong = along.min - RAY_MARGIN;
   const centreAlong = centre.x * dir.x + centre.y * dir.y;
+  const centreSide = centre.x * side.x + centre.y * side.y;
   const impulse = { x: dir.x * stream.intensity, y: dir.y * stream.intensity };
 
   for (let k = 0; k < count; k++) {
     const t = vanDerCorput(state.index++);
     const s = extent.min + t * (extent.max - extent.min);
-    const centreSide = centre.x * side.x + centre.y * side.y;
     const p1 = {
       x: centre.x + (s - centreSide) * side.x + (startAlong - centreAlong) * dir.x,
       y: centre.y + (s - centreSide) * side.y + (startAlong - centreAlong) * dir.y,
@@ -145,8 +86,8 @@ function stepBody(body: Body, stream: ParticleStream, dt: number): void {
     const p2 = { x: p1.x + dir.x * reach, y: p1.y + dir.y * reach };
     const hit = rayHit(body, p1, p2);
     if (!hit) continue;
-    body.applyLinearImpulse(impulse, hit, true);
-    recordHit(hit);
+    body.applyLinearImpulse(impulse, hit.point, true);
+    recordHit(hit.point);
   }
 }
 
@@ -173,8 +114,7 @@ export function recentHits(): { point: Point; age: number }[] {
 
 /** Unit vector of the stream's direction of travel. */
 export function streamDirection(stream: ParticleStream): Point {
-  const theta = (stream.angleDeg * Math.PI) / 180;
-  return { x: Math.cos(theta), y: Math.sin(theta) };
+  return directionOf(stream.angleDeg);
 }
 
 /**
@@ -187,15 +127,5 @@ export function streamArrow(
   gap: number,
   length: number,
 ): { tail: Point; head: Point } | null {
-  const dir = streamDirection(stream);
-  const along = extentAlong(body, dir);
-  if (!along) return null;
-  const centre = body.getWorldCenter();
-  const centreAlong = centre.x * dir.x + centre.y * dir.y;
-  const headAlong = along.min - gap;
-  const head = {
-    x: centre.x + (headAlong - centreAlong) * dir.x,
-    y: centre.y + (headAlong - centreAlong) * dir.y,
-  };
-  return { tail: { x: head.x - dir.x * length, y: head.y - dir.y * length }, head };
+  return upstreamArrow(body, directionOf(stream.angleDeg), gap, length);
 }

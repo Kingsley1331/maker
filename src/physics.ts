@@ -28,7 +28,9 @@ import {
   type BodyUserData,
   type JointUserData,
 } from "./shapes";
+import { facingEdges, stepDirectionalForces, windDirection } from "./directional-force";
 import { HIT_FADE_SECONDS, recentHits, stepParticleStreams, streamArrow } from "./particle-stream";
+import { extentAlong, upstreamArrow } from "./surface";
 import { GRAVITY_SCALE, toMeters, toPixels, vecToMeters, vecToPixels, type Point } from "./units";
 import { createWrapGhosts } from "./wrap-ghosts";
 
@@ -40,6 +42,11 @@ const STREAM_ACCENT = "#e0762b";
 const STREAM_ARROW_GAP_PX = 10;
 const STREAM_ARROW_LENGTH_PX = 26;
 const STREAM_HIT_RADIUS_PX = 2.5;
+const WIND_ACCENT = "#1fa39b";
+/** Number of parallel arrows drawn upstream of a shape with a directional force. */
+const WIND_ARROW_COUNT = 3;
+const WIND_ARROW_GAP_PX = 10;
+const WIND_ARROW_LENGTH_PX = 22;
 /** Click distance to a drawn edge, in screen pixels. */
 const EDGE_HIT_PX = 8;
 /** Drawn thickness of an edge segment, in world pixels. */
@@ -614,25 +621,14 @@ export function createPhysics(container: HTMLElement): Physics {
     ctx.restore();
   }
 
-  /** Direction arrow for a shape's particle stream, drawn just upstream of the shape. */
-  function drawStreamArrow(body: Body, data: BodyUserData): void {
-    if (!data.stream) return;
-    const arrow = streamArrow(body, data.stream, toMeters(STREAM_ARROW_GAP_PX), toMeters(STREAM_ARROW_LENGTH_PX));
-    if (!arrow) return;
-    const tail = vecToPixels(arrow.tail);
-    const head = vecToPixels(arrow.head);
+  /** Arrow (world px) from `tail` to `head` with a filled head, in the current stroke/fill style. */
+  function strokeArrow(tail: Point, head: Point, wing: number): void {
     const dx = head.x - tail.x;
     const dy = head.y - tail.y;
     const len = Math.hypot(dx, dy);
     if (len < 1e-6) return;
     const ux = dx / len;
     const uy = dy / len;
-    const wing = 6;
-    ctx.save();
-    ctx.strokeStyle = STREAM_ACCENT;
-    ctx.fillStyle = STREAM_ACCENT;
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
     ctx.beginPath();
     ctx.moveTo(tail.x, tail.y);
     ctx.lineTo(head.x - ux * wing, head.y - uy * wing);
@@ -643,6 +639,57 @@ export function createPhysics(container: HTMLElement): Physics {
     ctx.lineTo(head.x - ux * wing * 1.6 + uy * wing * 0.8, head.y - uy * wing * 1.6 - ux * wing * 0.8);
     ctx.closePath();
     ctx.fill();
+  }
+
+  /** Direction arrow for a shape's particle stream, drawn just upstream of the shape. */
+  function drawStreamArrow(body: Body, data: BodyUserData): void {
+    if (!data.stream) return;
+    const arrow = streamArrow(body, data.stream, toMeters(STREAM_ARROW_GAP_PX), toMeters(STREAM_ARROW_LENGTH_PX));
+    if (!arrow) return;
+    ctx.save();
+    ctx.strokeStyle = STREAM_ACCENT;
+    ctx.fillStyle = STREAM_ACCENT;
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    strokeArrow(vecToPixels(arrow.tail), vecToPixels(arrow.head), 6);
+    ctx.restore();
+  }
+
+  /**
+   * Directional force indicator: parallel arrows upstream of the shape spread across its
+   * silhouette, plus the facing edges stroked with alpha proportional to cos(A).
+   */
+  function drawWind(body: Body, data: BodyUserData): void {
+    if (!data.wind) return;
+    const dir = windDirection(data.wind);
+    const side = { x: -dir.y, y: dir.x };
+    const extent = extentAlong(body, side);
+    if (!extent) return;
+    const centre = body.getWorldCenter();
+    const centreSide = centre.x * side.x + centre.y * side.y;
+    const width = extent.max - extent.min;
+
+    ctx.save();
+    ctx.strokeStyle = WIND_ACCENT;
+    ctx.fillStyle = WIND_ACCENT;
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = "round";
+    for (let i = 0; i < WIND_ARROW_COUNT; i++) {
+      const t = (i + 0.5) / WIND_ARROW_COUNT;
+      const offset = extent.min + t * width - centreSide;
+      const arrow = upstreamArrow(body, dir, toMeters(WIND_ARROW_GAP_PX), toMeters(WIND_ARROW_LENGTH_PX), offset);
+      if (arrow) strokeArrow(vecToPixels(arrow.tail), vecToPixels(arrow.head), 5);
+    }
+    ctx.lineWidth = 3;
+    for (const edge of facingEdges(body, dir)) {
+      const a = vecToPixels(edge.a);
+      const b = vecToPixels(edge.b);
+      ctx.globalAlpha = 0.25 + 0.65 * Math.min(1, edge.cosA);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -715,9 +762,10 @@ export function createPhysics(container: HTMLElement): Physics {
       }
       for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
         const data = getBodyData(body);
-        if (!data || data.kind !== "shape" || !data.stream) continue;
+        if (!data || data.kind !== "shape" || (!data.stream && !data.wind)) continue;
         const b = bodyBounds.get(body);
         if (b && !copyInView(b.min, b.max, o, view)) continue;
+        drawWind(body, data);
         drawStreamArrow(body, data);
       }
       drawStreamHits();
@@ -733,6 +781,7 @@ export function createPhysics(container: HTMLElement): Physics {
   function advanceStep(): void {
     if (wrapEnabled) ghosts.sync(size);
     stepParticleStreams(world, STEP);
+    stepDirectionalForces(world);
     world.step(STEP, VELOCITY_ITERATIONS, POSITION_ITERATIONS);
     if (wrapEnabled) ghosts.apply(STEP);
     stepCount += 1;

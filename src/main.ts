@@ -108,6 +108,14 @@ const ui = setupUi({
       body.setAwake(true);
     }
   },
+  onWindChange: (wind) => {
+    for (const body of input.selection.members) {
+      const data = getBodyData(body);
+      if (!data || data.kind !== "shape") continue;
+      data.wind = wind ? { ...wind } : undefined;
+      body.setAwake(true);
+    }
+  },
   onZoomChange: (zoom) => physics.setZoom(zoom),
   onToolChange: (tool) => {
     if (tool.kind === "zoom") input.selection.deselect();

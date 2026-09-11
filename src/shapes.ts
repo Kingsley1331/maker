@@ -67,6 +67,22 @@ export const DEFAULT_STREAM: Readonly<ParticleStream> = {
   frequency: 60,
 };
 
+/**
+ * A steady wind-like pressure from one direction. Every outline edge facing the flow is pushed
+ * along the flow by `force x length x cos(A)`, where A is the angle of incidence on that edge.
+ */
+export interface DirectionalForce {
+  /** Direction the force pushes, degrees (0 = rightwards, 90 = downwards on screen). */
+  angleDeg: number;
+  /** Pressure: newtons per metre of exposed edge, before the cos(A) factor. */
+  force: number;
+}
+
+export const DEFAULT_WIND: Readonly<DirectionalForce> = {
+  angleDeg: 0,
+  force: 5,
+};
+
 export interface BodyUserData {
   kind: BodyKind;
   label: string;
@@ -79,6 +95,8 @@ export interface BodyUserData {
   restitutionOverride?: number;
   /** When set, the shape is peppered with impulses from this direction while the sim runs. */
   stream?: ParticleStream;
+  /** When set, a steady pressure pushes the shape's facing edges while the sim runs. */
+  wind?: DirectionalForce;
 }
 
 export interface ShapePreview {
@@ -754,6 +772,7 @@ export function cloneBodyData(data: BodyUserData | undefined): BodyUserData {
   if (data.holes) copy.holes = data.holes.map((ring) => ring.map((p) => ({ x: p.x, y: p.y })));
   if (data.restitutionOverride !== undefined) copy.restitutionOverride = data.restitutionOverride;
   if (data.stream) copy.stream = { ...data.stream };
+  if (data.wind) copy.wind = { ...data.wind };
   return copy;
 }
 
