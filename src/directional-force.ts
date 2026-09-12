@@ -114,11 +114,13 @@ function applyWind(body: Body, wind: DirectionalForce): number {
 export function stepDirectionalForces(world: World, dt: number): void {
   for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
     const data = getBodyData(body);
-    if (!data || data.kind !== "shape" || !data.wind) continue;
-    // The schedule clock runs whether or not the body can currently be moved.
-    const on = advanceSchedule(data.wind, dt);
-    if (!on || body.getType() !== "dynamic") continue;
-    applyWind(body, data.wind);
+    if (!data || data.kind !== "shape" || !data.winds) continue;
+    for (const wind of data.winds) {
+      // The schedule clock runs whether or not the body can currently be moved.
+      const on = advanceSchedule(wind, dt);
+      if (!on || body.getType() !== "dynamic") continue;
+      applyWind(body, wind);
+    }
   }
 }
 

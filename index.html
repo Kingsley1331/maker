@@ -437,94 +437,138 @@
           <span class="label">Colour</span>
           <input id="selection-color" type="color" />
         </label>
-        <label class="check-row" for="stream-enabled" title="Pepper the shape with tiny impulses from one direction while the sim runs">
-          <span class="label">Particle stream</span>
-          <input id="stream-enabled" type="checkbox" />
-        </label>
-        <div id="stream-controls" hidden>
-          <label class="slider" for="stream-angle">
-            <span class="label">Direction <output id="stream-angle-value">0°</output></span>
-            <input id="stream-angle" type="range" min="0" max="359" step="1" value="0" />
-          </label>
-          <label class="slider" for="stream-intensity">
-            <span class="label">Intensity <output id="stream-intensity-value">0.10</output></span>
-            <input id="stream-intensity" type="range" min="0.01" max="2" step="0.01" value="0.1" />
-          </label>
-          <label class="slider" for="stream-frequency">
-            <span class="label">Rate <output id="stream-frequency-value">60 /s</output></span>
-            <input id="stream-frequency" type="range" min="1" max="240" step="1" value="60" />
-          </label>
-          <label class="check-row" for="stream-always" title="Uncheck to run the stream on a timer">
-            <span class="label">Always on</span>
-            <input id="stream-always" type="checkbox" checked />
-          </label>
-          <div id="stream-schedule" class="schedule" hidden>
-            <div id="stream-phases" class="schedule-rows"></div>
-            <div class="schedule-add">
-              <button
-                id="stream-add"
-                type="button"
-                class="schedule-add-btn"
-                aria-haspopup="menu"
-                aria-expanded="false"
-                aria-controls="stream-add-menu"
-                title="Add a phase"
-              >
-                +
-              </button>
-              <div id="stream-add-menu" class="schedule-menu" role="menu" hidden>
-                <button type="button" data-kind="on" role="menuitem">On for…</button>
-                <button type="button" data-kind="off" role="menuitem">Off for…</button>
-              </div>
-            </div>
-            <label class="check-row" for="stream-loop" title="Repeat the whole list of phases">
-              <span class="label">Loop</span>
-              <input id="stream-loop" type="checkbox" />
-            </label>
-          </div>
+        <div class="feature-header" title="Pepper the shape with tiny impulses from one direction while the sim runs">
+          <span class="label">Particle streams</span>
+          <button
+            id="stream-add"
+            type="button"
+            class="feature-add-btn"
+            title="Add a particle stream"
+            aria-label="Add a particle stream"
+          >
+            +
+          </button>
         </div>
-        <label class="check-row" for="wind-enabled" title="Steady pressure from one direction; each facing edge is pushed by force × length × cos(angle of incidence)">
-          <span class="label">Directional force</span>
-          <input id="wind-enabled" type="checkbox" />
-        </label>
-        <div id="wind-controls" hidden>
-          <label class="slider" for="wind-angle">
-            <span class="label">Direction <output id="wind-angle-value">0°</output></span>
-            <input id="wind-angle" type="range" min="0" max="359" step="1" value="0" />
-          </label>
-          <label class="slider" for="wind-force">
-            <span class="label">Force <output id="wind-force-value">5.0 N/m</output></span>
-            <input id="wind-force" type="range" min="0.1" max="50" step="0.1" value="5" />
-          </label>
-          <label class="check-row" for="wind-always" title="Uncheck to run the force on a timer">
-            <span class="label">Always on</span>
-            <input id="wind-always" type="checkbox" checked />
-          </label>
-          <div id="wind-schedule" class="schedule" hidden>
-            <div id="wind-phases" class="schedule-rows"></div>
-            <div class="schedule-add">
+        <div id="stream-list" class="feature-list"></div>
+        <template id="stream-template">
+          <div class="feature-item">
+            <div class="feature-item-header">
+              <span class="label feature-item-title" data-role="title">Stream</span>
               <button
-                id="wind-add"
                 type="button"
-                class="schedule-add-btn"
-                aria-haspopup="menu"
-                aria-expanded="false"
-                aria-controls="wind-add-menu"
-                title="Add a phase"
+                class="feature-remove"
+                data-role="remove"
+                title="Remove this stream"
+                aria-label="Remove this stream"
               >
-                +
+                ×
               </button>
-              <div id="wind-add-menu" class="schedule-menu" role="menu" hidden>
-                <button type="button" data-kind="on" role="menuitem">On for…</button>
-                <button type="button" data-kind="off" role="menuitem">Off for…</button>
-              </div>
             </div>
-            <label class="check-row" for="wind-loop" title="Repeat the whole list of phases">
-              <span class="label">Loop</span>
-              <input id="wind-loop" type="checkbox" />
+            <label class="slider">
+              <span class="label">Direction <output data-role="angleDeg-value">0°</output></span>
+              <input data-role="angleDeg" type="range" min="0" max="359" step="1" value="0" />
             </label>
+            <label class="slider">
+              <span class="label">Intensity <output data-role="intensity-value">0.10</output></span>
+              <input data-role="intensity" type="range" min="0.01" max="2" step="0.01" value="0.1" />
+            </label>
+            <label class="slider">
+              <span class="label">Rate <output data-role="frequency-value">60 /s</output></span>
+              <input data-role="frequency" type="range" min="1" max="240" step="1" value="60" />
+            </label>
+            <label class="check-row" title="Uncheck to run the stream on a timer">
+              <span class="label">Always on</span>
+              <input data-role="always" type="checkbox" checked />
+            </label>
+            <div class="schedule" data-role="schedule" hidden>
+              <div class="schedule-rows" data-role="phases"></div>
+              <div class="schedule-add">
+                <button
+                  type="button"
+                  class="schedule-add-btn"
+                  data-role="add"
+                  aria-haspopup="menu"
+                  aria-expanded="false"
+                  title="Add a phase"
+                >
+                  +
+                </button>
+                <div class="schedule-menu" data-role="add-menu" role="menu" hidden>
+                  <button type="button" data-kind="on" role="menuitem">On for…</button>
+                  <button type="button" data-kind="off" role="menuitem">Off for…</button>
+                </div>
+              </div>
+              <label class="check-row" title="Repeat the whole list of phases">
+                <span class="label">Loop</span>
+                <input data-role="loop" type="checkbox" />
+              </label>
+            </div>
           </div>
+        </template>
+        <div class="feature-header" title="Steady pressure from one direction; each facing edge is pushed by force × length × cos(angle of incidence)">
+          <span class="label">Directional forces</span>
+          <button
+            id="wind-add"
+            type="button"
+            class="feature-add-btn"
+            title="Add a directional force"
+            aria-label="Add a directional force"
+          >
+            +
+          </button>
         </div>
+        <div id="wind-list" class="feature-list"></div>
+        <template id="wind-template">
+          <div class="feature-item">
+            <div class="feature-item-header">
+              <span class="label feature-item-title" data-role="title">Force</span>
+              <button
+                type="button"
+                class="feature-remove"
+                data-role="remove"
+                title="Remove this force"
+                aria-label="Remove this force"
+              >
+                ×
+              </button>
+            </div>
+            <label class="slider">
+              <span class="label">Direction <output data-role="angleDeg-value">0°</output></span>
+              <input data-role="angleDeg" type="range" min="0" max="359" step="1" value="0" />
+            </label>
+            <label class="slider">
+              <span class="label">Force <output data-role="force-value">5.0 N/m</output></span>
+              <input data-role="force" type="range" min="0.1" max="50" step="0.1" value="5" />
+            </label>
+            <label class="check-row" title="Uncheck to run the force on a timer">
+              <span class="label">Always on</span>
+              <input data-role="always" type="checkbox" checked />
+            </label>
+            <div class="schedule" data-role="schedule" hidden>
+              <div class="schedule-rows" data-role="phases"></div>
+              <div class="schedule-add">
+                <button
+                  type="button"
+                  class="schedule-add-btn"
+                  data-role="add"
+                  aria-haspopup="menu"
+                  aria-expanded="false"
+                  title="Add a phase"
+                >
+                  +
+                </button>
+                <div class="schedule-menu" data-role="add-menu" role="menu" hidden>
+                  <button type="button" data-kind="on" role="menuitem">On for…</button>
+                  <button type="button" data-kind="off" role="menuitem">Off for…</button>
+                </div>
+              </div>
+              <label class="check-row" title="Repeat the whole list of phases">
+                <span class="label">Loop</span>
+                <input data-role="loop" type="checkbox" />
+              </label>
+            </div>
+          </div>
+        </template>
         <div class="segmented" id="body-type" role="group" aria-label="Body type">
           <button type="button" data-body-type="static">Static</button>
           <button type="button" data-body-type="dynamic">Dynamic</button>

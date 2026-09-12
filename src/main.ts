@@ -18,6 +18,23 @@ import { vecToMeters } from "./units";
 
 const THUMBNAIL_WIDTH = 320;
 
+/**
+ * Replace the entry at `index` of a body's stream / force list with a copy of `value` (appending
+ * when `index` is past the end), or remove it when `value` is null. Returns the list to store:
+ * undefined once it is empty. Untouched entries keep their identity, and with it their schedule
+ * clocks and emission state.
+ */
+function updateFeatureList<T extends object>(
+  list: T[] | undefined,
+  index: number,
+  value: T | null,
+): T[] | undefined {
+  const next = list ?? [];
+  if (value) next[Math.min(Math.max(0, index), next.length)] = { ...value };
+  else if (index >= 0 && index < next.length) next.splice(index, 1);
+  return next.length > 0 ? next : undefined;
+}
+
 const scene = document.getElementById("scene");
 if (!scene) {
   throw new Error("Missing #scene container");
@@ -100,19 +117,19 @@ const ui = setupUi({
       if (data) data.fillStyle = color;
     }
   },
-  onStreamChange: (stream) => {
+  onStreamChange: (index, stream) => {
     for (const body of input.selection.members) {
       const data = getBodyData(body);
       if (!data || data.kind !== "shape") continue;
-      data.stream = stream ? { ...stream } : undefined;
+      data.streams = updateFeatureList(data.streams, index, stream);
       body.setAwake(true);
     }
   },
-  onWindChange: (wind) => {
+  onWindChange: (index, wind) => {
     for (const body of input.selection.members) {
       const data = getBodyData(body);
       if (!data || data.kind !== "shape") continue;
-      data.wind = wind ? { ...wind } : undefined;
+      data.winds = updateFeatureList(data.winds, index, wind);
       body.setAwake(true);
     }
   },

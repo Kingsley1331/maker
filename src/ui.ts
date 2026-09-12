@@ -82,15 +82,17 @@ export interface UiOptions {
   onSpinChange(degPerSec: number): void;
   onColorChange(color: string): void;
   /**
-   * Called when the particle stream checkbox or one of its sliders changes for the current
-   * selection: the new settings, or null to turn the stream off.
+   * Called when a particle stream is added, edited, or removed on the current selection. `stream`
+   * replaces the entry at `index` (appending when `index` equals the list length); null removes
+   * it.
    */
-  onStreamChange(stream: ParticleStream | null): void;
+  onStreamChange(index: number, stream: ParticleStream | null): void;
   /**
-   * Called when the directional force checkbox or one of its sliders changes for the current
-   * selection: the new settings, or null to turn the force off.
+   * Called when a directional force is added, edited, or removed on the current selection. `wind`
+   * replaces the entry at `index` (appending when `index` equals the list length); null removes
+   * it.
    */
-  onWindChange(wind: DirectionalForce | null): void;
+  onWindChange(index: number, wind: DirectionalForce | null): void;
   /** View zoom. 1 is identity; the slider and keyboard omit a cursor anchor. */
   onZoomChange(zoom: number): void;
   /** Fired when the shape, joint, or zoom tool changes. */
@@ -874,35 +876,35 @@ export function setupUi({
     if (input.checked !== checked) input.checked = checked;
   }
 
+  /** Find a control inside a cloned feature panel by its `data-role`. */
+  function requireRole<E extends HTMLElement>(root: ParentNode, role: string): E {
+    const el = root.querySelector<E>(`[data-role="${role}"]`);
+    if (!el) throw new Error(`Missing [data-role="${role}"] in feature template`);
+    return el;
+  }
+
+  /** One feature panel's timer controls: Always on, ordered On / Off rows, a "+" menu, Loop. */
+  interface ScheduleControls {
+    /** Current schedule, or undefined when Always on is checked. */
+    read(): Schedule | undefined;
+    /** Reflect a schedule without disturbing a control being edited. */
+    sync(schedule: Schedule | undefined): void;
+    /** Drop the document-level listener once the panel is removed. */
+    dispose(): void;
+  }
+
   /**
-   * A per-selection feature that a checkbox turns on (with defaults), a few sliders tune, and an
-   * optional schedule of ordered On / Off phases. `fields` maps each numeric setting key to its
-   * slider id and how to print the value. Schedule controls use the ids `{prefix}-always`,
-   * `{prefix}-schedule`, `{prefix}-phases`, `{prefix}-add`, `{prefix}-add-menu` and
-   * `{prefix}-loop`.
+   * Bind the schedule controls inside `root` (a cloned feature panel). `emit` is called whenever
+   * the user changes the schedule.
    */
-  function bindToggledFeature<T extends Scheduled & { [K in NumericKeys<T>]: number }>(
-    prefix: string,
-    defaults: Readonly<T>,
-    fields: { [K in NumericKeys<T>]: { id: string; format(value: number): string } },
-    onChange: (value: T | null) => void,
-  ): (value: T | undefined) => void {
-    const enabled = requireElement<HTMLInputElement>(`${prefix}-enabled`);
-    const controls = requireElement<HTMLDivElement>(`${prefix}-controls`);
-    const keys = Object.keys(fields) as NumericKeys<T>[];
-    const inputs = {} as Record<NumericKeys<T>, HTMLInputElement>;
-    const outputs = {} as Record<NumericKeys<T>, HTMLOutputElement>;
-    for (const key of keys) {
-      inputs[key] = requireElement<HTMLInputElement>(fields[key].id);
-      outputs[key] = requireElement<HTMLOutputElement>(`${fields[key].id}-value`);
-    }
-    const always = requireElement<HTMLInputElement>(`${prefix}-always`);
-    const scheduleBox = requireElement<HTMLDivElement>(`${prefix}-schedule`);
-    const rowsBox = requireElement<HTMLDivElement>(`${prefix}-phases`);
-    const addButton = requireElement<HTMLButtonElement>(`${prefix}-add`);
-    const addMenu = requireElement<HTMLDivElement>(`${prefix}-add-menu`);
+  function bindSchedule(root: ParentNode, emit: () => void): ScheduleControls {
+    const always = requireRole<HTMLInputElement>(root, "always");
+    const scheduleBox = requireRole<HTMLDivElement>(root, "schedule");
+    const rowsBox = requireRole<HTMLDivElement>(root, "phases");
+    const addButton = requireRole<HTMLButtonElement>(root, "add");
+    const addMenu = requireRole<HTMLDivElement>(root, "add-menu");
     const addWrap = addButton.parentElement ?? addButton;
-    const loop = requireElement<HTMLInputElement>(`${prefix}-loop`);
+    const loop = requireRole<HTMLInputElement>(root, "loop");
 
     /** The UI's working copy of the schedule rows, in run order. */
     let phases: SchedulePhase[] = [];
@@ -981,11 +983,12 @@ export function setupUi({
       });
     }
     // Pressing anywhere outside the "+" button and its menu closes the menu.
-    document.addEventListener("pointerdown", (event) => {
+    const closeOnOutsidePress = (event: PointerEvent): void => {
       if (addMenu.hidden) return;
       if (event.target instanceof Node && addWrap.contains(event.target)) return;
       setMenuOpen(false);
-    });
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePress);
     addWrap.addEventListener("keydown", (event) => {
       if (event.key !== "Escape" || addMenu.hidden) return;
       event.preventDefault();
@@ -1025,34 +1028,6 @@ export function setupUi({
       setCheckedIfUnfocused(loop, times.loop);
     }
 
-    function read(): T {
-      const numbers = {} as Record<NumericKeys<T>, number>;
-      for (const key of keys) {
-        const value = Number(inputs[key].value);
-        numbers[key] = Number.isFinite(value) ? value : (defaults[key] as number);
-      }
-      const out: Scheduled = { ...numbers };
-      const schedule = readSchedule();
-      if (schedule) out.schedule = schedule;
-      return out as T;
-    }
-
-    function show(value: T): void {
-      for (const key of keys) outputs[key].textContent = fields[key].format(value[key] as number);
-    }
-
-    function emit(): void {
-      const value = read();
-      show(value);
-      onChange(value);
-    }
-
-    enabled.addEventListener("change", () => {
-      controls.hidden = !enabled.checked;
-      if (enabled.checked) emit();
-      else onChange(null);
-    });
-    for (const key of keys) inputs[key].addEventListener("input", emit);
     always.addEventListener("change", () => {
       scheduleBox.hidden = always.checked;
       if (!always.checked) {
@@ -1067,39 +1042,163 @@ export function setupUi({
     });
     loop.addEventListener("change", emit);
 
-    /** Write a value (or the defaults) into the controls without disturbing one being edited. */
-    return (value) => {
-      const on = value !== undefined;
-      setCheckedIfUnfocused(enabled, on);
-      controls.hidden = !on;
-      const values = value ?? defaults;
-      for (const key of keys) setIfUnfocused(inputs[key], String(values[key]));
-      syncSchedule(values.schedule);
-      show(read());
+    return {
+      read: readSchedule,
+      sync: syncSchedule,
+      dispose: () => document.removeEventListener("pointerdown", closeOnOutsidePress),
+    };
+  }
+
+  /**
+   * A list of per-selection feature instances (particle streams, directional forces). The "+"
+   * button `#{prefix}-add` appends one; each instance is a clone of `#{prefix}-template` placed in
+   * `#{prefix}-list`, with a slider per numeric setting (found by `data-role` = key, its readout by
+   * `data-role` = `{key}-value`), Always on / schedule controls, and a remove button.
+   * `onChange(index, value)` replaces the entry at `index` (appending when `index` equals the
+   * list length); `onChange(index, null)` removes it.
+   */
+  function bindFeatureList<T extends Scheduled & { [K in NumericKeys<T>]: number }>(
+    prefix: string,
+    noun: string,
+    defaults: Readonly<T>,
+    fields: { [K in NumericKeys<T>]: { format(value: number): string } },
+    onChange: (index: number, value: T | null) => void,
+  ): (values: readonly T[] | undefined) => void {
+    const addButton = requireElement<HTMLButtonElement>(`${prefix}-add`);
+    const list = requireElement<HTMLDivElement>(`${prefix}-list`);
+    const template = requireElement<HTMLTemplateElement>(`${prefix}-template`);
+    const keys = Object.keys(fields) as NumericKeys<T>[];
+
+    interface Item {
+      root: HTMLElement;
+      title: HTMLElement;
+      inputs: Record<NumericKeys<T>, HTMLInputElement>;
+      outputs: Record<NumericKeys<T>, HTMLOutputElement>;
+      schedule: ScheduleControls;
+    }
+    /** Rendered panels, parallel to the selection's list of settings. */
+    let items: Item[] = [];
+
+    function read(item: Item): T {
+      const numbers = {} as Record<NumericKeys<T>, number>;
+      for (const key of keys) {
+        const value = Number(item.inputs[key].value);
+        numbers[key] = Number.isFinite(value) ? value : (defaults[key] as number);
+      }
+      const out: Scheduled = { ...numbers };
+      const schedule = item.schedule.read();
+      if (schedule) out.schedule = schedule;
+      return out as T;
+    }
+
+    function show(item: Item, value: T): void {
+      for (const key of keys) {
+        item.outputs[key].textContent = fields[key].format(value[key] as number);
+      }
+    }
+
+    function emit(item: Item): void {
+      const index = items.indexOf(item);
+      if (index < 0) return;
+      const value = read(item);
+      show(item, value);
+      onChange(index, value);
+    }
+
+    function retitle(): void {
+      items.forEach((item, i) => {
+        item.title.textContent = `${noun} ${i + 1}`;
+      });
+    }
+
+    function createItem(): Item {
+      const fragment = template.content.cloneNode(true) as DocumentFragment;
+      const root = fragment.firstElementChild as HTMLElement;
+      const inputs = {} as Record<NumericKeys<T>, HTMLInputElement>;
+      const outputs = {} as Record<NumericKeys<T>, HTMLOutputElement>;
+      for (const key of keys) {
+        inputs[key] = requireRole<HTMLInputElement>(root, String(key));
+        outputs[key] = requireRole<HTMLOutputElement>(root, `${String(key)}-value`);
+      }
+      const item = { root, title: requireRole<HTMLElement>(root, "title"), inputs, outputs } as Item;
+      item.schedule = bindSchedule(root, () => emit(item));
+      for (const key of keys) inputs[key].addEventListener("input", () => emit(item));
+      requireRole<HTMLButtonElement>(root, "remove").addEventListener("click", () => {
+        const index = items.indexOf(item);
+        if (index < 0) return;
+        item.schedule.dispose();
+        item.root.remove();
+        items.splice(index, 1);
+        retitle();
+        onChange(index, null);
+      });
+      return item;
+    }
+
+    /** Write a value into a panel without disturbing a control being edited. */
+    function write(item: Item, value: T): void {
+      for (const key of keys) setIfUnfocused(item.inputs[key], String(value[key]));
+      item.schedule.sync(value.schedule);
+      show(item, read(item));
+    }
+
+    /** Tear down and rebuild every panel for a list of `count` entries. */
+    function rebuild(count: number): void {
+      for (const item of items) item.schedule.dispose();
+      list.replaceChildren();
+      items = [];
+      for (let i = 0; i < count; i++) {
+        const item = createItem();
+        items.push(item);
+        list.append(item.root);
+      }
+      retitle();
+    }
+
+    addButton.addEventListener("click", () => {
+      const item = createItem();
+      items.push(item);
+      list.append(item.root);
+      retitle();
+      write(item, defaults);
+      onChange(items.length - 1, { ...defaults });
+      item.root.scrollIntoView({ block: "nearest" });
+    });
+
+    /**
+     * Reflect the selection's list. Panels are rebuilt only when the count changes; otherwise each
+     * one is updated in place so a live per-frame refresh never disturbs a control being edited.
+     */
+    return (values) => {
+      const incoming = values ?? [];
+      if (incoming.length !== items.length) rebuild(incoming.length);
+      incoming.forEach((value, i) => write(items[i], value));
     };
   }
 
   const degrees = (value: number): string => `${Math.round(value)}\u00B0`;
 
-  // Particle stream
-  const syncStreamControls = bindToggledFeature<ParticleStream>(
+  // Particle streams
+  const syncStreamControls = bindFeatureList<ParticleStream>(
     "stream",
+    "Stream",
     DEFAULT_STREAM,
     {
-      angleDeg: { id: "stream-angle", format: degrees },
-      intensity: { id: "stream-intensity", format: (v) => v.toFixed(2) },
-      frequency: { id: "stream-frequency", format: (v) => `${Math.round(v)} /s` },
+      angleDeg: { format: degrees },
+      intensity: { format: (v) => v.toFixed(2) },
+      frequency: { format: (v) => `${Math.round(v)} /s` },
     },
     onStreamChange,
   );
 
-  // Directional force (wind pressure)
-  const syncWindControls = bindToggledFeature<DirectionalForce>(
+  // Directional forces (wind pressure)
+  const syncWindControls = bindFeatureList<DirectionalForce>(
     "wind",
+    "Force",
     DEFAULT_WIND,
     {
-      angleDeg: { id: "wind-angle", format: degrees },
-      force: { id: "wind-force", format: (v) => `${v.toFixed(1)} N/m` },
+      angleDeg: { format: degrees },
+      force: { format: (v) => `${v.toFixed(1)} N/m` },
     },
     onWindChange,
   );
@@ -1150,8 +1249,8 @@ export function setupUi({
       if (selectionColor.value !== hex) selectionColor.value = hex;
     }
     const data = getBodyData(body);
-    syncStreamControls(data?.stream);
-    syncWindControls(data?.wind);
+    syncStreamControls(data?.streams);
+    syncWindControls(data?.winds);
   }
 
   // Selected joint motor

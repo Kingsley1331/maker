@@ -157,11 +157,17 @@ export interface BodyUserData {
   holes?: Point[][];
   /** When set, this body ignores the global elasticity slider. */
   restitutionOverride?: number;
-  /** When set, the shape is peppered with impulses from this direction while the sim runs. */
-  stream?: ParticleStream;
-  /** When set, a steady pressure pushes the shape's facing edges while the sim runs. */
-  wind?: DirectionalForce;
+  /** Particle streams peppering the shape with impulses while the sim runs (absent = none). */
+  streams?: ParticleStream[];
+  /** Steady pressures pushing the shape's facing edges while the sim runs (absent = none). */
+  winds?: DirectionalForce[];
 }
+
+/** Body data as written by older saves, which carried at most one stream and one force. */
+export type LegacyBodyUserData = BodyUserData & {
+  stream?: ParticleStream;
+  wind?: DirectionalForce;
+};
 
 export interface ShapePreview {
   type: PrimitiveShape | "box" | "frame" | "edge";
@@ -839,15 +845,28 @@ export function cloneScheduled<T extends Scheduled>(settings: T): T {
   return copy;
 }
 
-/** Deep-copy body user data so clones / saves do not share outline arrays. */
-export function cloneBodyData(data: BodyUserData | undefined): BodyUserData {
+/** Deep-copy a list of scheduled settings, appending an older single-value form if present. */
+function cloneScheduledList<T extends Scheduled>(list: T[] | undefined, legacy: T | undefined): T[] | undefined {
+  const out: T[] = [];
+  if (Array.isArray(list)) for (const item of list) if (item) out.push(cloneScheduled(item));
+  if (legacy) out.push(cloneScheduled(legacy));
+  return out.length > 0 ? out : undefined;
+}
+
+/**
+ * Deep-copy body user data so clones / saves do not share outline arrays. Older saves with a
+ * single `stream` / `wind` are folded into the `streams` / `winds` lists.
+ */
+export function cloneBodyData(data: LegacyBodyUserData | undefined): BodyUserData {
   if (!data) return { kind: "shape", label: "Body", fillStyle: DEFAULT_FILL };
   const copy: BodyUserData = { kind: data.kind, label: data.label, fillStyle: data.fillStyle };
   if (data.outline) copy.outline = data.outline.map((p) => ({ x: p.x, y: p.y }));
   if (data.holes) copy.holes = data.holes.map((ring) => ring.map((p) => ({ x: p.x, y: p.y })));
   if (data.restitutionOverride !== undefined) copy.restitutionOverride = data.restitutionOverride;
-  if (data.stream) copy.stream = cloneScheduled(data.stream);
-  if (data.wind) copy.wind = cloneScheduled(data.wind);
+  const streams = cloneScheduledList(data.streams, data.stream);
+  if (streams) copy.streams = streams;
+  const winds = cloneScheduledList(data.winds, data.wind);
+  if (winds) copy.winds = winds;
   return copy;
 }
 

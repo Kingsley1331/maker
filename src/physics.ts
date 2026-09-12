@@ -26,7 +26,9 @@ import {
   setDefaultFriction,
   setDefaultRestitution,
   type BodyUserData,
+  type DirectionalForce,
   type JointUserData,
+  type ParticleStream,
 } from "./shapes";
 import { facingEdges, stepDirectionalForces, windDirection } from "./directional-force";
 import { HIT_FADE_SECONDS, recentHits, stepParticleStreams, streamArrow } from "./particle-stream";
@@ -644,13 +646,12 @@ export function createPhysics(container: HTMLElement): Physics {
     ctx.fill();
   }
 
-  /** Direction arrow for a shape's particle stream, drawn just upstream of the shape. */
-  function drawStreamArrow(body: Body, data: BodyUserData): void {
-    if (!data.stream) return;
-    const arrow = streamArrow(body, data.stream, toMeters(STREAM_ARROW_GAP_PX), toMeters(STREAM_ARROW_LENGTH_PX));
+  /** Direction arrow for one of a shape's particle streams, drawn just upstream of the shape. */
+  function drawStreamArrow(body: Body, stream: ParticleStream): void {
+    const arrow = streamArrow(body, stream, toMeters(STREAM_ARROW_GAP_PX), toMeters(STREAM_ARROW_LENGTH_PX));
     if (!arrow) return;
     ctx.save();
-    if (!isScheduleOn(data.stream)) ctx.globalAlpha = SCHEDULED_OFF_ALPHA;
+    if (!isScheduleOn(stream)) ctx.globalAlpha = SCHEDULED_OFF_ALPHA;
     ctx.strokeStyle = STREAM_ACCENT;
     ctx.fillStyle = STREAM_ACCENT;
     ctx.lineWidth = 2;
@@ -663,9 +664,8 @@ export function createPhysics(container: HTMLElement): Physics {
    * Directional force indicator: parallel arrows upstream of the shape spread across its
    * silhouette, plus the facing edges stroked with alpha proportional to cos(A).
    */
-  function drawWind(body: Body, data: BodyUserData): void {
-    if (!data.wind) return;
-    const dir = windDirection(data.wind);
+  function drawWind(body: Body, wind: DirectionalForce): void {
+    const dir = windDirection(wind);
     const side = { x: -dir.y, y: dir.x };
     const extent = extentAlong(body, side);
     if (!extent) return;
@@ -673,7 +673,7 @@ export function createPhysics(container: HTMLElement): Physics {
     const centreSide = centre.x * side.x + centre.y * side.y;
     const width = extent.max - extent.min;
 
-    const dim = isScheduleOn(data.wind) ? 1 : SCHEDULED_OFF_ALPHA;
+    const dim = isScheduleOn(wind) ? 1 : SCHEDULED_OFF_ALPHA;
     ctx.save();
     ctx.globalAlpha = dim;
     ctx.strokeStyle = WIND_ACCENT;
@@ -768,11 +768,11 @@ export function createPhysics(container: HTMLElement): Physics {
       }
       for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
         const data = getBodyData(body);
-        if (!data || data.kind !== "shape" || (!data.stream && !data.wind)) continue;
+        if (!data || data.kind !== "shape" || (!data.streams?.length && !data.winds?.length)) continue;
         const b = bodyBounds.get(body);
         if (b && !copyInView(b.min, b.max, o, view)) continue;
-        drawWind(body, data);
-        drawStreamArrow(body, data);
+        for (const wind of data.winds ?? []) drawWind(body, wind);
+        for (const stream of data.streams ?? []) drawStreamArrow(body, stream);
       }
       drawStreamHits();
       ctx.restore();

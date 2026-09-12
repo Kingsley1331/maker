@@ -522,6 +522,79 @@ body {
   opacity: 0.45;
 }
 
+/* Per-shape feature lists (particle streams, directional forces): heading with "+" and N panels. */
+.feature-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.feature-header .label {
+  flex: 1;
+}
+
+.feature-add-btn,
+.feature-remove {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1;
+  color: #e6e6e6;
+  background: #2a2f38;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.feature-add-btn:hover,
+.feature-remove:hover {
+  background: #343a45;
+}
+
+.feature-remove {
+  font-size: 13px;
+  font-weight: 400;
+  color: #9aa3b2;
+}
+
+.feature-remove:hover {
+  color: #e6e6e6;
+}
+
+.feature-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.feature-list:empty {
+  display: none;
+}
+
+.feature-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0 8px 10px;
+  border-left: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.feature-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.feature-item-title {
+  flex: 1;
+  color: #e6e6e6;
+}
+
 /* Stream / force timer: an ordered list of On / Off rows plus a "+" menu to append one. */
 .schedule {
   display: flex;

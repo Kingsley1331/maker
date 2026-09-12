@@ -29,7 +29,12 @@ export interface StreamHit {
   time: number;
 }
 
-const states = new WeakMap<Body, StreamState>();
+/**
+ * Emission state per stream setting. Every body owns its own copy of each setting, and the UI
+ * replaces the object on every change, so keying on it gives each stream its own accumulator and
+ * sample sequence without an explicit reset.
+ */
+const states = new WeakMap<ParticleStream, StreamState>();
 const hits: StreamHit[] = [];
 let simTime = 0;
 
@@ -75,10 +80,10 @@ function recordHit(point: Point): void {
 }
 
 function stepBody(body: Body, stream: ParticleStream, dt: number): void {
-  let state = states.get(body);
+  let state = states.get(stream);
   if (!state) {
     state = { acc: 0, index: 1, pending: null, lead: 0 };
-    states.set(body, state);
+    states.set(stream, state);
   }
   const frequency = Math.max(0, stream.frequency);
   if (frequency <= 0 || stream.intensity <= 0) return;
@@ -127,11 +132,13 @@ export function stepParticleStreams(world: World, dt: number): void {
   simTime += dt;
   for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
     const data = getBodyData(body);
-    if (!data || data.kind !== "shape" || !data.stream) continue;
-    // The schedule clock runs whether or not the body can currently be moved.
-    const on = advanceSchedule(data.stream, dt);
-    if (!on || body.getType() !== "dynamic") continue;
-    stepBody(body, data.stream, dt);
+    if (!data || data.kind !== "shape" || !data.streams) continue;
+    for (const stream of data.streams) {
+      // The schedule clock runs whether or not the body can currently be moved.
+      const on = advanceSchedule(stream, dt);
+      if (!on || body.getType() !== "dynamic") continue;
+      stepBody(body, stream, dt);
+    }
   }
   // Drop hits that have already faded so the buffer stays small when streams stop.
   while (hits.length > 0 && simTime - hits[0].time > HIT_FADE_SECONDS) hits.shift();
