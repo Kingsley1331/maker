@@ -16,6 +16,10 @@ interface StreamState {
   acc: number;
   /** Next index into the low-discrepancy sequence. */
   index: number;
+  /** Second half of the current mirrored pair, waiting to be emitted; null between pairs. */
+  pending: number | null;
+  /** Running sum of each pair's leading offset from the centre; kept near zero. */
+  lead: number;
 }
 
 export interface StreamHit {
@@ -42,6 +46,29 @@ function vanDerCorput(index: number): number {
   return result;
 }
 
+/**
+ * Position of the next particle across the body's silhouette, in [0, 1).
+ *
+ * Samples come in mirrored pairs `0.5 ± u`, with `u` drawn from the van der Corput sequence so the
+ * set of hit points stays evenly spread at every prefix length. Using the raw sequence directly
+ * always put the lower half before the upper half (`vdc(2m + 1) = vdc(2m) + 0.5`), so between the
+ * two hits of every pair the body carried a one-sided torque and slowly rolled in one direction.
+ * Each pair now leads with whichever side brings the running sum of leading offsets back toward
+ * zero, so that torque has no long-run direction.
+ */
+function nextSample(state: StreamState): number {
+  if (state.pending !== null) {
+    const s = state.pending;
+    state.pending = null;
+    return s;
+  }
+  const u = vanDerCorput(state.index++) * 0.5;
+  const sign = state.lead > 0 ? -1 : 1;
+  state.lead += sign * u;
+  state.pending = 0.5 - sign * u;
+  return 0.5 + sign * u;
+}
+
 function recordHit(point: Point): void {
   if (hits.length >= MAX_HITS) hits.shift();
   hits.push({ point, time: simTime });
@@ -50,7 +77,7 @@ function recordHit(point: Point): void {
 function stepBody(body: Body, stream: ParticleStream, dt: number): void {
   let state = states.get(body);
   if (!state) {
-    state = { acc: 0, index: 1 };
+    state = { acc: 0, index: 1, pending: null, lead: 0 };
     states.set(body, state);
   }
   const frequency = Math.max(0, stream.frequency);
@@ -78,7 +105,7 @@ function stepBody(body: Body, stream: ParticleStream, dt: number): void {
   const impulse = { x: dir.x * stream.intensity, y: dir.y * stream.intensity };
 
   for (let k = 0; k < count; k++) {
-    const t = vanDerCorput(state.index++);
+    const t = nextSample(state);
     const s = extent.min + t * (extent.max - extent.min);
     const p1 = {
       x: centre.x + (s - centreSide) * side.x + (startAlong - centreAlong) * dir.x,
