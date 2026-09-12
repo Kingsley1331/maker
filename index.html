@@ -454,6 +454,34 @@
             <span class="label">Rate <output id="stream-frequency-value">60 /s</output></span>
             <input id="stream-frequency" type="range" min="1" max="240" step="1" value="60" />
           </label>
+          <label class="check-row" for="stream-always" title="Uncheck to run the stream on a timer">
+            <span class="label">Always on</span>
+            <input id="stream-always" type="checkbox" checked />
+          </label>
+          <div id="stream-schedule" class="schedule" hidden>
+            <div id="stream-phases" class="schedule-rows"></div>
+            <div class="schedule-add">
+              <button
+                id="stream-add"
+                type="button"
+                class="schedule-add-btn"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="stream-add-menu"
+                title="Add a phase"
+              >
+                +
+              </button>
+              <div id="stream-add-menu" class="schedule-menu" role="menu" hidden>
+                <button type="button" data-kind="on" role="menuitem">On for…</button>
+                <button type="button" data-kind="off" role="menuitem">Off for…</button>
+              </div>
+            </div>
+            <label class="check-row" for="stream-loop" title="Repeat the whole list of phases">
+              <span class="label">Loop</span>
+              <input id="stream-loop" type="checkbox" />
+            </label>
+          </div>
         </div>
         <label class="check-row" for="wind-enabled" title="Steady pressure from one direction; each facing edge is pushed by force × length × cos(angle of incidence)">
           <span class="label">Directional force</span>
@@ -468,6 +496,34 @@
             <span class="label">Force <output id="wind-force-value">5.0 N/m</output></span>
             <input id="wind-force" type="range" min="0.1" max="50" step="0.1" value="5" />
           </label>
+          <label class="check-row" for="wind-always" title="Uncheck to run the force on a timer">
+            <span class="label">Always on</span>
+            <input id="wind-always" type="checkbox" checked />
+          </label>
+          <div id="wind-schedule" class="schedule" hidden>
+            <div id="wind-phases" class="schedule-rows"></div>
+            <div class="schedule-add">
+              <button
+                id="wind-add"
+                type="button"
+                class="schedule-add-btn"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="wind-add-menu"
+                title="Add a phase"
+              >
+                +
+              </button>
+              <div id="wind-add-menu" class="schedule-menu" role="menu" hidden>
+                <button type="button" data-kind="on" role="menuitem">On for…</button>
+                <button type="button" data-kind="off" role="menuitem">Off for…</button>
+              </div>
+            </div>
+            <label class="check-row" for="wind-loop" title="Repeat the whole list of phases">
+              <span class="label">Loop</span>
+              <input id="wind-loop" type="checkbox" />
+            </label>
+          </div>
         </div>
         <div class="segmented" id="body-type" role="group" aria-label="Body type">
           <button type="button" data-body-type="static">Static</button>

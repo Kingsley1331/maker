@@ -48,11 +48,75 @@ export type { Point };
 /** `ghost`: invisible wrap-mode mirror of a shape (see wrap-ghosts.ts); never pickable or drawn. */
 export type BodyKind = "shape" | "wall" | "ground" | "ghost";
 
+export type PhaseKind = "on" | "off";
+
+/** One step of a stream / force timer. */
+export interface SchedulePhase {
+  kind: PhaseKind;
+  /** Duration in simulated seconds. */
+  seconds: number;
+}
+
+/**
+ * Timing for a stream / force. Phases run in order from the moment the setting was applied;
+ * absent schedule = always on.
+ */
+export interface Schedule {
+  phases: SchedulePhase[];
+  /** Repeat the whole list; otherwise stay off after the last phase. */
+  loop: boolean;
+}
+
+export const DEFAULT_SCHEDULE: Readonly<Schedule> = { phases: [], loop: false };
+
+/** Duration given to a freshly added row. */
+export const DEFAULT_PHASE_SECONDS = 1;
+
+/** Shape of the schedule before phases were a list; still found in older saved scenes. */
+interface LegacySchedule {
+  offSeconds?: unknown;
+  onSeconds?: unknown;
+  loop?: unknown;
+}
+
+function finiteSeconds(value: unknown): number {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+/** Deep-copy a schedule, converting the older `{ offSeconds, onSeconds, loop }` form to rows. */
+export function normalizeSchedule(schedule: Schedule | LegacySchedule): Schedule {
+  const loop = (schedule as LegacySchedule).loop === true;
+  const phases = (schedule as Partial<Schedule>).phases;
+  if (Array.isArray(phases)) {
+    const rows: SchedulePhase[] = [];
+    for (const phase of phases) {
+      if (!phase || typeof phase !== "object") continue;
+      const kind = (phase as SchedulePhase).kind === "on" ? "on" : "off";
+      rows.push({ kind, seconds: finiteSeconds((phase as SchedulePhase).seconds) });
+    }
+    return { phases: rows, loop };
+  }
+  const legacy = schedule as LegacySchedule;
+  return {
+    phases: [
+      { kind: "off", seconds: finiteSeconds(legacy.offSeconds) },
+      { kind: "on", seconds: finiteSeconds(legacy.onSeconds) },
+    ],
+    loop,
+  };
+}
+
+/** Settings that can carry a schedule. */
+export interface Scheduled {
+  schedule?: Schedule;
+}
+
 /**
  * A stream of tiny particles hitting the shape from one direction. Each particle is a linear
  * impulse applied at the point where a ray travelling in `angleDeg` first meets the shape.
  */
-export interface ParticleStream {
+export interface ParticleStream extends Scheduled {
   /** Direction the particles travel, degrees (0 = rightwards, 90 = downwards on screen). */
   angleDeg: number;
   /** Impulse per particle, N·s. */
@@ -71,7 +135,7 @@ export const DEFAULT_STREAM: Readonly<ParticleStream> = {
  * A steady wind-like pressure from one direction. Every outline edge facing the flow is pushed
  * along the flow by `force x length x cos(A)`, where A is the angle of incidence on that edge.
  */
-export interface DirectionalForce {
+export interface DirectionalForce extends Scheduled {
   /** Direction the force pushes, degrees (0 = rightwards, 90 = downwards on screen). */
   angleDeg: number;
   /** Pressure: newtons per metre of exposed edge, before the cos(A) factor. */
@@ -764,6 +828,17 @@ export function scaleBody(body: Body, factor: number): void {
   body.setAwake(true);
 }
 
+/**
+ * Copy a stream / force setting together with its nested schedule. The schedule is deep-copied
+ * and normalised, so a scene saved in the older off / on form loads as two rows.
+ */
+export function cloneScheduled<T extends Scheduled>(settings: T): T {
+  const copy = { ...settings };
+  if (settings.schedule) copy.schedule = normalizeSchedule(settings.schedule);
+  else delete copy.schedule;
+  return copy;
+}
+
 /** Deep-copy body user data so clones / saves do not share outline arrays. */
 export function cloneBodyData(data: BodyUserData | undefined): BodyUserData {
   if (!data) return { kind: "shape", label: "Body", fillStyle: DEFAULT_FILL };
@@ -771,8 +846,8 @@ export function cloneBodyData(data: BodyUserData | undefined): BodyUserData {
   if (data.outline) copy.outline = data.outline.map((p) => ({ x: p.x, y: p.y }));
   if (data.holes) copy.holes = data.holes.map((ring) => ring.map((p) => ({ x: p.x, y: p.y })));
   if (data.restitutionOverride !== undefined) copy.restitutionOverride = data.restitutionOverride;
-  if (data.stream) copy.stream = { ...data.stream };
-  if (data.wind) copy.wind = { ...data.wind };
+  if (data.stream) copy.stream = cloneScheduled(data.stream);
+  if (data.wind) copy.wind = cloneScheduled(data.wind);
   return copy;
 }
 

@@ -30,6 +30,7 @@ import {
 } from "./shapes";
 import { facingEdges, stepDirectionalForces, windDirection } from "./directional-force";
 import { HIT_FADE_SECONDS, recentHits, stepParticleStreams, streamArrow } from "./particle-stream";
+import { isScheduleOn } from "./schedule";
 import { extentAlong, upstreamArrow } from "./surface";
 import { GRAVITY_SCALE, toMeters, toPixels, vecToMeters, vecToPixels, type Point } from "./units";
 import { createWrapGhosts } from "./wrap-ghosts";
@@ -42,6 +43,8 @@ const STREAM_ACCENT = "#e0762b";
 const STREAM_ARROW_GAP_PX = 10;
 const STREAM_ARROW_LENGTH_PX = 26;
 const STREAM_HIT_RADIUS_PX = 2.5;
+/** Overlay opacity for a stream / force whose schedule currently has it off. */
+const SCHEDULED_OFF_ALPHA = 0.3;
 const WIND_ACCENT = "#1fa39b";
 /** Number of parallel arrows drawn upstream of a shape with a directional force. */
 const WIND_ARROW_COUNT = 3;
@@ -647,6 +650,7 @@ export function createPhysics(container: HTMLElement): Physics {
     const arrow = streamArrow(body, data.stream, toMeters(STREAM_ARROW_GAP_PX), toMeters(STREAM_ARROW_LENGTH_PX));
     if (!arrow) return;
     ctx.save();
+    if (!isScheduleOn(data.stream)) ctx.globalAlpha = SCHEDULED_OFF_ALPHA;
     ctx.strokeStyle = STREAM_ACCENT;
     ctx.fillStyle = STREAM_ACCENT;
     ctx.lineWidth = 2;
@@ -669,7 +673,9 @@ export function createPhysics(container: HTMLElement): Physics {
     const centreSide = centre.x * side.x + centre.y * side.y;
     const width = extent.max - extent.min;
 
+    const dim = isScheduleOn(data.wind) ? 1 : SCHEDULED_OFF_ALPHA;
     ctx.save();
+    ctx.globalAlpha = dim;
     ctx.strokeStyle = WIND_ACCENT;
     ctx.fillStyle = WIND_ACCENT;
     ctx.lineWidth = 1.5;
@@ -684,7 +690,7 @@ export function createPhysics(container: HTMLElement): Physics {
     for (const edge of facingEdges(body, dir)) {
       const a = vecToPixels(edge.a);
       const b = vecToPixels(edge.b);
-      ctx.globalAlpha = 0.25 + 0.65 * Math.min(1, edge.cosA);
+      ctx.globalAlpha = dim * (0.25 + 0.65 * Math.min(1, edge.cosA));
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
@@ -781,7 +787,7 @@ export function createPhysics(container: HTMLElement): Physics {
   function advanceStep(): void {
     if (wrapEnabled) ghosts.sync(size);
     stepParticleStreams(world, STEP);
-    stepDirectionalForces(world);
+    stepDirectionalForces(world, STEP);
     world.step(STEP, VELOCITY_ITERATIONS, POSITION_ITERATIONS);
     if (wrapEnabled) ghosts.apply(STEP);
     stepCount += 1;

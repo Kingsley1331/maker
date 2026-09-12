@@ -522,6 +522,143 @@ body {
   opacity: 0.45;
 }
 
+/* Stream / force timer: an ordered list of On / Off rows plus a "+" menu to append one. */
+.schedule {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.schedule[hidden] {
+  display: none;
+}
+
+.schedule-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.schedule-rows:empty {
+  display: none;
+}
+
+.schedule-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.schedule-row-kind {
+  min-width: 28px;
+  color: #9aa3b2;
+  user-select: none;
+}
+
+.schedule-row input[type="number"] {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 3px 6px;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  color: #e6e6e6;
+  text-align: right;
+  background: #2a2f38;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  appearance: textfield;
+}
+
+.schedule-row input[type="number"]::-webkit-inner-spin-button,
+.schedule-row input[type="number"]::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+.schedule-row-remove {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: #9aa3b2;
+  background: #2a2f38;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.schedule-row-remove:hover {
+  color: #e6e6e6;
+  background: #343a45;
+}
+
+.schedule-add {
+  position: relative;
+}
+
+.schedule-add-btn {
+  width: 100%;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  color: #e6e6e6;
+  background: #2a2f38;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.schedule-add-btn:hover,
+.schedule-add-btn[aria-expanded="true"] {
+  background: #343a45;
+}
+
+.schedule-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  background: #2a2f38;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+}
+
+.schedule-menu[hidden] {
+  display: none;
+}
+
+.schedule-menu button {
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 12px;
+  color: #e6e6e6;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.schedule-menu button:hover,
+.schedule-menu button:focus-visible {
+  background: #3b6fe0;
+  border-color: #5f8cf0;
+  outline: none;
+}
+
 .spray-options-btn {
   width: 100%;
   padding: 0;

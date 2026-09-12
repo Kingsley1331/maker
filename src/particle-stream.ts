@@ -1,4 +1,5 @@
 import type { Body, World } from "planck";
+import { advanceSchedule } from "./schedule";
 import { getBodyData, type ParticleStream } from "./shapes";
 import { directionOf, extentAlong, rayHit, upstreamArrow } from "./surface";
 import type { Point } from "./units";
@@ -100,7 +101,9 @@ export function stepParticleStreams(world: World, dt: number): void {
   for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
     const data = getBodyData(body);
     if (!data || data.kind !== "shape" || !data.stream) continue;
-    if (body.getType() !== "dynamic") continue;
+    // The schedule clock runs whether or not the body can currently be moved.
+    const on = advanceSchedule(data.stream, dt);
+    if (!on || body.getType() !== "dynamic") continue;
     stepBody(body, data.stream, dt);
   }
   // Drop hits that have already faded so the buffer stays small when streams stop.

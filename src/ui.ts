@@ -20,6 +20,8 @@ import { bodyLabel, groupBoundsPx } from "./group";
 import { bodyBoundsPx, MAX_ZOOM, MIN_ZOOM } from "./physics";
 import {
   DEFAULT_FILL,
+  DEFAULT_PHASE_SECONDS,
+  DEFAULT_SCHEDULE,
   DEFAULT_STREAM,
   DEFAULT_WALL_THICKNESS,
   DEFAULT_WIND,
@@ -31,6 +33,10 @@ import {
   type DirectionalForce,
   type JointUserData,
   type ParticleStream,
+  type PhaseKind,
+  type Schedule,
+  type Scheduled,
+  type SchedulePhase,
   type ShapeType,
 } from "./shapes";
 import { FRICTION, LINEAR_DAMPING, RESTITUTION, toPixels } from "./units";
@@ -859,37 +865,180 @@ export function setupUi({
 
   selectionColor.addEventListener("input", () => onColorChange(selectionColor.value));
 
+  /** Numeric setting keys of a scheduled feature (everything except the schedule itself). */
+  type NumericKeys<T> = Exclude<keyof T, "schedule">;
+
+  /** Set a checkbox unless the user is on it right now. */
+  function setCheckedIfUnfocused(input: HTMLInputElement, checked: boolean): void {
+    if (document.activeElement === input) return;
+    if (input.checked !== checked) input.checked = checked;
+  }
+
   /**
-   * A per-selection feature that a checkbox turns on (with defaults) and a few sliders tune.
-   * `fields` maps each setting key to its slider id and how to print the value.
+   * A per-selection feature that a checkbox turns on (with defaults), a few sliders tune, and an
+   * optional schedule of ordered On / Off phases. `fields` maps each numeric setting key to its
+   * slider id and how to print the value. Schedule controls use the ids `{prefix}-always`,
+   * `{prefix}-schedule`, `{prefix}-phases`, `{prefix}-add`, `{prefix}-add-menu` and
+   * `{prefix}-loop`.
    */
-  function bindToggledSliders<T extends { [K in keyof T]: number }>(
+  function bindToggledFeature<T extends Scheduled & { [K in NumericKeys<T>]: number }>(
     prefix: string,
     defaults: Readonly<T>,
-    fields: { [K in keyof T]: { id: string; format(value: number): string } },
+    fields: { [K in NumericKeys<T>]: { id: string; format(value: number): string } },
     onChange: (value: T | null) => void,
   ): (value: T | undefined) => void {
     const enabled = requireElement<HTMLInputElement>(`${prefix}-enabled`);
     const controls = requireElement<HTMLDivElement>(`${prefix}-controls`);
-    const keys = Object.keys(fields) as (keyof T)[];
-    const inputs = {} as Record<keyof T, HTMLInputElement>;
-    const outputs = {} as Record<keyof T, HTMLOutputElement>;
+    const keys = Object.keys(fields) as NumericKeys<T>[];
+    const inputs = {} as Record<NumericKeys<T>, HTMLInputElement>;
+    const outputs = {} as Record<NumericKeys<T>, HTMLOutputElement>;
     for (const key of keys) {
       inputs[key] = requireElement<HTMLInputElement>(fields[key].id);
       outputs[key] = requireElement<HTMLOutputElement>(`${fields[key].id}-value`);
     }
+    const always = requireElement<HTMLInputElement>(`${prefix}-always`);
+    const scheduleBox = requireElement<HTMLDivElement>(`${prefix}-schedule`);
+    const rowsBox = requireElement<HTMLDivElement>(`${prefix}-phases`);
+    const addButton = requireElement<HTMLButtonElement>(`${prefix}-add`);
+    const addMenu = requireElement<HTMLDivElement>(`${prefix}-add-menu`);
+    const addWrap = addButton.parentElement ?? addButton;
+    const loop = requireElement<HTMLInputElement>(`${prefix}-loop`);
+
+    /** The UI's working copy of the schedule rows, in run order. */
+    let phases: SchedulePhase[] = [];
+    /** Seconds input of each rendered row, parallel to `phases`. */
+    let rowInputs: HTMLInputElement[] = [];
+
+    function readSeconds(input: HTMLInputElement): number {
+      const value = Number(input.value);
+      return Number.isFinite(value) && value >= 0 ? value : 0;
+    }
+
+    function kindLabel(kind: PhaseKind): string {
+      return kind === "on" ? "On" : "Off";
+    }
+
+    /** Rebuild the row elements from `phases`. */
+    function renderRows(): void {
+      rowsBox.replaceChildren();
+      rowInputs = [];
+      for (const phase of phases) {
+        const row = document.createElement("div");
+        row.className = "schedule-row";
+
+        const kind = document.createElement("span");
+        kind.className = "schedule-row-kind";
+        kind.textContent = kindLabel(phase.kind);
+
+        const seconds = document.createElement("input");
+        seconds.type = "number";
+        seconds.min = "0";
+        seconds.step = "0.5";
+        seconds.value = String(phase.seconds);
+        seconds.title = "Seconds";
+        seconds.setAttribute("aria-label", `${kindLabel(phase.kind)} for (seconds)`);
+        seconds.addEventListener("input", () => {
+          phase.seconds = readSeconds(seconds);
+          emit();
+        });
+
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "schedule-row-remove";
+        remove.textContent = "\u00D7";
+        remove.title = "Remove phase";
+        remove.setAttribute("aria-label", "Remove phase");
+        remove.addEventListener("click", () => {
+          const index = phases.indexOf(phase);
+          if (index < 0) return;
+          phases.splice(index, 1);
+          renderRows();
+          emit();
+        });
+
+        row.append(kind, seconds, remove);
+        rowsBox.append(row);
+        rowInputs.push(seconds);
+      }
+    }
+
+    function setMenuOpen(open: boolean): void {
+      addMenu.hidden = !open;
+      addButton.setAttribute("aria-expanded", String(open));
+    }
+
+    addButton.addEventListener("click", () => setMenuOpen(addMenu.hidden));
+    for (const item of addMenu.querySelectorAll<HTMLButtonElement>("[data-kind]")) {
+      item.addEventListener("click", () => {
+        const kind: PhaseKind = item.dataset.kind === "on" ? "on" : "off";
+        phases.push({ kind, seconds: DEFAULT_PHASE_SECONDS });
+        setMenuOpen(false);
+        renderRows();
+        const added = rowInputs[rowInputs.length - 1];
+        added.focus();
+        added.select();
+        emit();
+      });
+    }
+    // Pressing anywhere outside the "+" button and its menu closes the menu.
+    document.addEventListener("pointerdown", (event) => {
+      if (addMenu.hidden) return;
+      if (event.target instanceof Node && addWrap.contains(event.target)) return;
+      setMenuOpen(false);
+    });
+    addWrap.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || addMenu.hidden) return;
+      event.preventDefault();
+      setMenuOpen(false);
+      addButton.focus();
+    });
+
+    function readSchedule(): Schedule | undefined {
+      if (always.checked) return undefined;
+      return { phases: phases.map((p) => ({ ...p })), loop: loop.checked };
+    }
+
+    /** True when the incoming rows match the rendered ones in count and kind. */
+    function sameStructure(incoming: readonly SchedulePhase[]): boolean {
+      if (incoming.length !== phases.length) return false;
+      return incoming.every((p, i) => p.kind === phases[i].kind);
+    }
+
+    /**
+     * Reflect a schedule in the rows. Only the seconds are written when the structure matches,
+     * so a live refresh never destroys the row the user is typing in.
+     */
+    function syncSchedule(schedule: Schedule | undefined): void {
+      setCheckedIfUnfocused(always, schedule === undefined);
+      scheduleBox.hidden = schedule === undefined;
+      if (scheduleBox.hidden) setMenuOpen(false);
+      const times = schedule ?? DEFAULT_SCHEDULE;
+      if (sameStructure(times.phases)) {
+        times.phases.forEach((p, i) => {
+          phases[i].seconds = p.seconds;
+          setIfUnfocused(rowInputs[i], String(p.seconds));
+        });
+      } else {
+        phases = times.phases.map((p) => ({ ...p }));
+        renderRows();
+      }
+      setCheckedIfUnfocused(loop, times.loop);
+    }
 
     function read(): T {
-      const out = {} as Record<keyof T, number>;
+      const numbers = {} as Record<NumericKeys<T>, number>;
       for (const key of keys) {
         const value = Number(inputs[key].value);
-        out[key] = Number.isFinite(value) ? value : defaults[key];
+        numbers[key] = Number.isFinite(value) ? value : (defaults[key] as number);
       }
+      const out: Scheduled = { ...numbers };
+      const schedule = readSchedule();
+      if (schedule) out.schedule = schedule;
       return out as T;
     }
 
     function show(value: T): void {
-      for (const key of keys) outputs[key].textContent = fields[key].format(value[key]);
+      for (const key of keys) outputs[key].textContent = fields[key].format(value[key] as number);
     }
 
     function emit(): void {
@@ -904,14 +1053,28 @@ export function setupUi({
       else onChange(null);
     });
     for (const key of keys) inputs[key].addEventListener("input", emit);
+    always.addEventListener("change", () => {
+      scheduleBox.hidden = always.checked;
+      if (!always.checked) {
+        // A fresh timer starts empty: the effect stays off until a row is added.
+        phases = [];
+        loop.checked = false;
+        renderRows();
+      } else {
+        setMenuOpen(false);
+      }
+      emit();
+    });
+    loop.addEventListener("change", emit);
 
-    /** Write a value (or the defaults) into the controls without disturbing one being dragged. */
+    /** Write a value (or the defaults) into the controls without disturbing one being edited. */
     return (value) => {
       const on = value !== undefined;
-      if (document.activeElement !== enabled && enabled.checked !== on) enabled.checked = on;
+      setCheckedIfUnfocused(enabled, on);
       controls.hidden = !on;
       const values = value ?? defaults;
       for (const key of keys) setIfUnfocused(inputs[key], String(values[key]));
+      syncSchedule(values.schedule);
       show(read());
     };
   }
@@ -919,7 +1082,7 @@ export function setupUi({
   const degrees = (value: number): string => `${Math.round(value)}\u00B0`;
 
   // Particle stream
-  const syncStreamControls = bindToggledSliders<ParticleStream>(
+  const syncStreamControls = bindToggledFeature<ParticleStream>(
     "stream",
     DEFAULT_STREAM,
     {
@@ -931,7 +1094,7 @@ export function setupUi({
   );
 
   // Directional force (wind pressure)
-  const syncWindControls = bindToggledSliders<DirectionalForce>(
+  const syncWindControls = bindToggledFeature<DirectionalForce>(
     "wind",
     DEFAULT_WIND,
     {
