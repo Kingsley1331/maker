@@ -660,7 +660,8 @@ function replaceFixtures(
   }
 }
 
-function applyContour(body: Body, outline: Point[], holes: Point[][]): boolean {
+/** Rebuild a filled body's fixtures from an outline and holes. Returns false if the contour is degenerate. */
+export function applyContour(body: Body, outline: Point[], holes: Point[][]): boolean {
   const pieces = earcutContour({ outline, holes });
   if (pieces.length === 0) return false;
   const material = fixtureMaterial(body);

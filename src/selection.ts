@@ -5,8 +5,29 @@ import {
   matchRotate,
   type AlignGuides,
 } from "./align-guides";
-import { connectedBodies, groupBoundsPx, rotateGroup, scaleGroup, translateGroup } from "./group";
-import { bodyBoundsPx, nearestWrapPoint, withWrapOffsets, type AfterRender } from "./physics";
+import {
+  connectedBodies,
+  groupBoundsPx,
+  rotateGroup,
+  scaleGroup,
+  translateGroup,
+} from "./group";
+import {
+  bodyBoundsPx,
+  nearestWrapPoint,
+  withWrapOffsets,
+  type AfterRender,
+} from "./physics";
+import {
+  listVertices,
+  moveVertex,
+  refsEqual,
+  startVertexDrag,
+  verticesOfDrag,
+  type VertexDrag,
+  type VertexHandle,
+  type VertexRef,
+} from "./reshape";
 import { isPickable } from "./shapes";
 import type { ActiveTool } from "./ui";
 import { vecToMeters, type Point } from "./units";
@@ -24,6 +45,12 @@ const ROTATE_HIT_RADIUS = 10;
 const ROTATE_SNAP = Math.PI / 12;
 
 const ACCENT = "#3b6fe0";
+const VERTEX_FILL = "#1c08b5";
+const VERTEX_STROKE = "#ffffff";
+/** Idle / hover radius in screen pixels (divided by zoom when drawing). */
+const VERTEX_RADIUS = 3;
+const VERTEX_HOVER_RADIUS = 4.5;
+const VERTEX_HIT_RADIUS = 7;
 
 interface Handle {
   kind: "scale" | "rotate";
@@ -32,7 +59,7 @@ interface Handle {
   cursor: string;
 }
 
-type Interaction = "none" | "scale" | "rotate";
+type Interaction = "none" | "scale" | "rotate" | "vertex";
 
 export interface SelectionOptions {
   canvas: HTMLCanvasElement;
@@ -78,7 +105,7 @@ export interface Selection {
   deselect(): void;
   /** Move everything selected by `dPx` pixels. */
   translate(dPx: Point): void;
-  /** True while a handle drag (scale or rotate) is in progress. */
+  /** True while a handle drag (scale, rotate, or vertex) is in progress. */
   readonly isInteracting: boolean;
 }
 
@@ -120,6 +147,10 @@ export function createSelection({
   let lastPointerAngle = 0;
   let accumulated = 0;
   let snappedApplied = 0;
+  // vertex
+  let vertexDrag: VertexDrag | null = null;
+  let vertexAround: Point = { x: 0, y: 0 };
+  let hoveredVertex: VertexRef | null = null;
 
   function select(body: Body): void {
     if (!isPaused()) return;
@@ -135,7 +166,12 @@ export function createSelection({
       return;
     }
 
-    if (mode === "body" && body === selected && setMembers.length > 1 && setMembers.includes(body)) {
+    if (
+      mode === "body" &&
+      body === selected &&
+      setMembers.length > 1 &&
+      setMembers.includes(body)
+    ) {
       members = setMembers.slice();
       mode = "set";
       onSelectionUpdate(selected, members);
@@ -210,6 +246,8 @@ export function createSelection({
     setMembers = [];
     mode = "body";
     interaction = "none";
+    vertexDrag = null;
+    hoveredVertex = null;
     canvas.style.cursor = "";
     selectedJoint = joint;
     if (bodyChanged) onSelectionUpdate(null, []);
@@ -224,13 +262,20 @@ export function createSelection({
     mode = "body";
     selectedJoint = null;
     interaction = "none";
+    vertexDrag = null;
+    hoveredVertex = null;
     canvas.style.cursor = "";
     guides.clear();
     onSelectionUpdate(null, []);
     onJointSelectionUpdate(null);
   }
 
-  function rectOf(bounds: { min: Point; max: Point }): { x: number; y: number; w: number; h: number } {
+  function rectOf(bounds: { min: Point; max: Point }): {
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  } {
     const { min, max } = bounds;
     return {
       x: min.x - BOX_PADDING,
@@ -257,7 +302,12 @@ export function createSelection({
       { kind: "scale", x: r.x + r.w, y: r.y, cursor: "nesw-resize" },
       { kind: "scale", x: r.x + r.w, y: r.y + r.h, cursor: "nwse-resize" },
       { kind: "scale", x: r.x, y: r.y + r.h, cursor: "nesw-resize" },
-      { kind: "rotate", x: r.x + r.w / 2, y: r.y - ROTATE_OFFSET, cursor: "grab" },
+      {
+        kind: "rotate",
+        x: r.x + r.w / 2,
+        y: r.y - ROTATE_OFFSET,
+        cursor: "grab",
+      },
     ];
   }
 
@@ -268,7 +318,10 @@ export function createSelection({
       for (const o of offsets) {
         const q = { x: point.x - o.x, y: point.y - o.y };
         if (handle.kind === "rotate") {
-          if (Math.hypot(q.x - handle.x, q.y - handle.y) <= ROTATE_HIT_RADIUS / getZoom()) {
+          if (
+            Math.hypot(q.x - handle.x, q.y - handle.y) <=
+            ROTATE_HIT_RADIUS / getZoom()
+          ) {
             return handle;
           }
         } else if (
@@ -282,13 +335,41 @@ export function createSelection({
     return null;
   }
 
+  function vertexHandles(): VertexHandle[] {
+    if (members.length !== 1 || !isPaused()) return [];
+    return listVertices(members[0]);
+  }
+
+  function hitVertex(point: Point): VertexHandle | null {
+    const verts = vertexHandles();
+    if (verts.length === 0) return null;
+    const radius = VERTEX_HIT_RADIUS / getZoom();
+    const offsets = getWrapOffsets();
+    let best: VertexHandle | null = null;
+    let bestDist = radius;
+    for (const vertex of verts) {
+      for (const o of offsets) {
+        const q = { x: point.x - o.x, y: point.y - o.y };
+        const dist = Math.hypot(q.x - vertex.worldPx.x, q.y - vertex.worldPx.y);
+        if (dist <= bestDist) {
+          best = vertex;
+          bestDist = dist;
+        }
+      }
+    }
+    return best;
+  }
+
   function unwrapToward(point: Point, around: Point): Point {
     return nearestWrapPoint(point, around, getWrapOffsets());
   }
 
   function canvasPoint(event: MouseEvent): Point {
     const rect = canvas.getBoundingClientRect();
-    return screenToWorld({ x: event.clientX - rect.left, y: event.clientY - rect.top });
+    return screenToWorld({
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    });
   }
 
   function maxWidth(): number {
@@ -344,9 +425,34 @@ export function createSelection({
           ctx.fill();
           ctx.stroke();
         } else {
-          ctx.fillRect(h.x - HANDLE_SIZE / 2, h.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
-          ctx.strokeRect(h.x - HANDLE_SIZE / 2, h.y - HANDLE_SIZE / 2, HANDLE_SIZE, HANDLE_SIZE);
+          ctx.fillRect(
+            h.x - HANDLE_SIZE / 2,
+            h.y - HANDLE_SIZE / 2,
+            HANDLE_SIZE,
+            HANDLE_SIZE,
+          );
+          ctx.strokeRect(
+            h.x - HANDLE_SIZE / 2,
+            h.y - HANDLE_SIZE / 2,
+            HANDLE_SIZE,
+            HANDLE_SIZE,
+          );
         }
+      }
+
+      const zoom = getZoom();
+      const stroke = 1 / zoom;
+      const verts = vertexDrag ? verticesOfDrag(vertexDrag) : vertexHandles();
+      for (const vertex of verts) {
+        const hover = refsEqual(hoveredVertex, vertex.ref);
+        const radius = (hover ? VERTEX_HOVER_RADIUS : VERTEX_RADIUS) / zoom;
+        ctx.beginPath();
+        ctx.arc(vertex.worldPx.x, vertex.worldPx.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = VERTEX_FILL;
+        ctx.fill();
+        ctx.lineWidth = stroke;
+        ctx.strokeStyle = VERTEX_STROKE;
+        ctx.stroke();
       }
       ctx.restore();
     });
@@ -358,12 +464,24 @@ export function createSelection({
 
   function onMove(event: MouseEvent): void {
     if (interaction === "none" || members.length === 0) return;
+
+    if (interaction === "vertex") {
+      if (!vertexDrag) return;
+      const p = unwrapToward(canvasPoint(event), vertexAround);
+      if (moveVertex(vertexDrag, p)) vertexAround = p;
+      canvas.style.cursor = "grabbing";
+      return;
+    }
+
     const p = unwrapToward(canvasPoint(event), pivot);
     const pivotM = vecToMeters(pivot);
 
     if (interaction === "scale") {
       const dist = Math.hypot(p.x - pivot.x, p.y - pivot.y);
-      const desiredWidth = Math.min(Math.max(startWidth * (dist / startDist), MIN_WIDTH), maxWidth());
+      const desiredWidth = Math.min(
+        Math.max(startWidth * (dist / startDist), MIN_WIDTH),
+        maxWidth(),
+      );
       const total = desiredWidth / startWidth;
       const factor = total / applied;
 
@@ -382,7 +500,9 @@ export function createSelection({
     lastPointerAngle = angle;
     accumulated += delta;
 
-    const target = event.shiftKey ? Math.round(accumulated / ROTATE_SNAP) * ROTATE_SNAP : accumulated;
+    const target = event.shiftKey
+      ? Math.round(accumulated / ROTATE_SNAP) * ROTATE_SNAP
+      : accumulated;
     const extra = target - snappedApplied;
     const aligned = matchRotate(
       members,
@@ -400,12 +520,15 @@ export function createSelection({
     guides.set(aligned.lines);
   }
 
-  function onUp(): void {
+  function onUp(event: MouseEvent): void {
     interaction = "none";
-    canvas.style.cursor = "";
+    vertexDrag = null;
     guides.clear();
     window.removeEventListener("mousemove", onMove);
     window.removeEventListener("mouseup", onUp);
+    const vertex = hitVertex(canvasPoint(event));
+    hoveredVertex = vertex ? vertex.ref : null;
+    canvas.style.cursor = vertex ? "grab" : "";
   }
 
   // Capture phase so this runs before the input module's listener.
@@ -413,8 +536,32 @@ export function createSelection({
     "mousedown",
     (event) => {
       if (event.button !== 0 || members.length === 0) return;
-      if (getActiveTool().kind === "zoom" || isSpray() || isCut() || isChainOutline()) return;
+      if (
+        getActiveTool().kind === "zoom" ||
+        isSpray() ||
+        isCut() ||
+        isChainOutline()
+      )
+        return;
       const raw = canvasPoint(event);
+      const vertex = hitVertex(raw);
+      if (vertex) {
+        const drag = startVertexDrag(members[0], vertex.ref);
+        if (drag) {
+          event.stopImmediatePropagation();
+          event.preventDefault();
+          vertexDrag = drag;
+          vertexAround = vertex.worldPx;
+          hoveredVertex = vertex.ref;
+          interaction = "vertex";
+          canvas.style.cursor = "grabbing";
+          guides.clear();
+          window.addEventListener("mousemove", onMove);
+          window.addEventListener("mouseup", onUp);
+          return;
+        }
+      }
+
       const handle = hitHandle(raw);
       if (!handle) return;
 
@@ -446,9 +593,31 @@ export function createSelection({
 
   canvas.addEventListener("mousemove", (event) => {
     if (interaction !== "none" || event.buttons !== 0) return;
-    if (getActiveTool().kind === "zoom" || isSpray() || isCut() || isChainOutline()) return;
-    const handle = hitHandle(canvasPoint(event));
+    if (
+      getActiveTool().kind === "zoom" ||
+      isSpray() ||
+      isCut() ||
+      isChainOutline()
+    ) {
+      hoveredVertex = null;
+      return;
+    }
+    const point = canvasPoint(event);
+    const vertex = hitVertex(point);
+    if (vertex) {
+      hoveredVertex = vertex.ref;
+      canvas.style.cursor = "grab";
+      return;
+    }
+    hoveredVertex = null;
+    const handle = hitHandle(point);
     canvas.style.cursor = handle ? handle.cursor : "";
+  });
+
+  canvas.addEventListener("mouseleave", () => {
+    if (interaction !== "none") return;
+    hoveredVertex = null;
+    canvas.style.cursor = "";
   });
 
   window.addEventListener("keydown", (event) => {
