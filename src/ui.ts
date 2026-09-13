@@ -278,6 +278,7 @@ export function setupUi({
   // Zoom
   const zoomInput = requireElement<HTMLInputElement>("zoom");
   const zoomValue = requireElement<HTMLOutputElement>("zoom-value");
+  const zoomRow = requireElement<HTMLLabelElement>("zoom-row");
 
   function clampZoom(value: number): number {
     return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value));
@@ -448,6 +449,7 @@ export function setupUi({
     const zoomOn = activeTool.kind === "zoom";
     zoomTool.classList.toggle("is-active", zoomOn);
     zoomTool.setAttribute("aria-pressed", String(zoomOn));
+    zoomRow.hidden = !zoomOn;
     zoomInput.disabled = !zoomOn;
     for (const button of shapeButtons) {
       button.classList.toggle(
@@ -464,7 +466,27 @@ export function setupUi({
     }
   }
 
-  bindActivate(zoomTool, () => setActiveTool({ kind: "zoom" }));
+  bindActivate(zoomTool, () => {
+    if (activeTool.kind === "zoom") {
+      setActiveTool({ kind: "none" });
+      return;
+    }
+    setActiveTool({ kind: "zoom" });
+  });
+
+  const settingsToggle = requireElement<HTMLButtonElement>("settings-toggle");
+  const worldSettings = requireElement<HTMLDivElement>("world-settings");
+
+  function setSettingsOpen(open: boolean): void {
+    worldSettings.hidden = !open;
+    settingsToggle.classList.toggle("is-active", open);
+    settingsToggle.setAttribute("aria-pressed", String(open));
+    settingsToggle.setAttribute("aria-expanded", String(open));
+    settingsToggle.title = open ? "Hide world settings" : "World settings";
+    settingsToggle.setAttribute("aria-label", settingsToggle.title);
+  }
+
+  bindActivate(settingsToggle, () => setSettingsOpen(worldSettings.hidden));
 
   bindActivate(sprayToggle, () => {
     if (!sprayAllowed(activeTool)) return;

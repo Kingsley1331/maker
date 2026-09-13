@@ -372,45 +372,62 @@
               <line x1="14.5" y1="14.5" x2="20" y2="20" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
             </svg>
           </button>
+          <button
+            id="settings-toggle"
+            class="view-btn"
+            type="button"
+            title="World settings"
+            aria-label="World settings"
+            aria-pressed="false"
+            aria-expanded="false"
+            aria-controls="world-settings"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <polygon
+                points="12,3 20,7.5 20,16.5 12,21 4,16.5 4,7.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linejoin="round"
+              />
+              <circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2" />
+            </svg>
+          </button>
         </div>
-        <label class="slider" for="zoom">
+        <label class="slider" id="zoom-row" for="zoom" hidden>
           <span class="label">Zoom <output id="zoom-value">100%</output></span>
           <input id="zoom" type="range" min="0.25" max="4" step="0.05" value="1" disabled />
         </label>
-      </div>
-
-      <div class="group">
-        <label class="slider" for="gravity-y">
-          <span class="label">Gravity Y <output id="gravity-y-value">0.00</output></span>
-          <input id="gravity-y" type="range" min="-2" max="2" step="0.05" value="0" />
-        </label>
-        <label class="slider" for="gravity-x">
-          <span class="label">Gravity X <output id="gravity-x-value">0.00</output></span>
-          <input id="gravity-x" type="range" min="-2" max="2" step="0.05" value="0" />
-        </label>
-        <label class="slider" for="elasticity">
-          <span class="label">Elasticity <output id="elasticity-value">0.40</output></span>
-          <input id="elasticity" type="range" min="0" max="1" step="0.05" value="0.4" />
-        </label>
-        <label class="slider" for="air-drag">
-          <span class="label">Air drag <output id="air-drag-value">0.01</output></span>
-          <input id="air-drag" type="range" min="0" max="1" step="0.01" value="0.01" />
-        </label>
-        <label class="slider" for="friction">
-          <span class="label">Friction <output id="friction-value">0.30</output></span>
-          <input id="friction" type="range" min="0" max="1" step="0.05" value="0.3" />
-        </label>
-        <label class="check-row" for="wrap-edges">
-          <span class="label">Wrap edges</span>
-          <input id="wrap-edges" type="checkbox" />
-        </label>
-      </div>
-
-      <div class="group">
-        <label class="color-row" for="background-color">
-          <span class="label">Background</span>
-          <input id="background-color" type="color" value="#ffffff" />
-        </label>
+        <div id="world-settings" hidden>
+          <label class="slider" for="gravity-y">
+            <span class="label">Gravity Y <output id="gravity-y-value">0.00</output></span>
+            <input id="gravity-y" type="range" min="-2" max="2" step="0.05" value="0" />
+          </label>
+          <label class="slider" for="gravity-x">
+            <span class="label">Gravity X <output id="gravity-x-value">0.00</output></span>
+            <input id="gravity-x" type="range" min="-2" max="2" step="0.05" value="0" />
+          </label>
+          <label class="slider" for="elasticity">
+            <span class="label">Elasticity <output id="elasticity-value">0.40</output></span>
+            <input id="elasticity" type="range" min="0" max="1" step="0.05" value="0.4" />
+          </label>
+          <label class="slider" for="air-drag">
+            <span class="label">Air drag <output id="air-drag-value">0.01</output></span>
+            <input id="air-drag" type="range" min="0" max="1" step="0.01" value="0.01" />
+          </label>
+          <label class="slider" for="friction">
+            <span class="label">Friction <output id="friction-value">0.30</output></span>
+            <input id="friction" type="range" min="0" max="1" step="0.05" value="0.3" />
+          </label>
+          <label class="check-row" for="wrap-edges">
+            <span class="label">Wrap edges</span>
+            <input id="wrap-edges" type="checkbox" />
+          </label>
+          <label class="color-row" for="background-color">
+            <span class="label">Background</span>
+            <input id="background-color" type="color" value="#ffffff" />
+          </label>
+        </div>
       </div>
 
       <div id="selection-info" class="group" hidden>
@@ -728,8 +745,13 @@
             weld expose Stiffness and Damping.
           </li>
           <li>
-            <strong>Zoom:</strong> select the Zoom tool in View first. Then the mouse wheel zooms
-            toward the cursor, drag pans the view, and the slider and + / - / 0 work (0 resets to 100%).
+            <strong>Zoom:</strong> press the Zoom tool in View to show the slider (press again to hide
+            it). Then the mouse wheel zooms toward the cursor, drag pans the view, and the slider
+            and + / - / 0 work (0 resets to 100%).
+          </li>
+          <li>
+            <strong>Settings:</strong> the gear next to Zoom opens gravity, elasticity, air drag,
+            friction, wrap edges, and background.
           </li>
           <li>
             <strong>Elasticity:</strong> the toolbar slider sets bounce for new shapes, walls, and

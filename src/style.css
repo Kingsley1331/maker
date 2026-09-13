@@ -429,6 +429,16 @@ body {
   display: none;
 }
 
+#world-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#world-settings[hidden] {
+  display: none;
+}
+
 .check-row[hidden] {
   display: none;
 }
