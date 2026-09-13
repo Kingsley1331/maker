@@ -1,6 +1,12 @@
 import { DistanceJoint, MouseJoint, PrismaticJoint, type Body, type Joint } from "planck";
 import { bodyBoundsPx } from "./physics";
-import { getBodyData, isPickable, scaleBody, type JointUserData } from "./shapes";
+import {
+  getBodyData,
+  isPickable,
+  scaleBody,
+  scaleLocalAboutWorldAxes,
+  type JointUserData,
+} from "./shapes";
 import type { Point } from "./units";
 
 /**
@@ -12,6 +18,8 @@ import type { Point } from "./units";
 interface AnchoredJoint extends Joint {
   m_localAnchorA: { x: number; y: number };
   m_localAnchorB: { x: number; y: number };
+  m_localXAxisA?: { x: number; y: number };
+  m_localYAxisA?: { x: number; y: number };
 }
 
 function anchors(joint: Joint): AnchoredJoint | null {
@@ -72,6 +80,41 @@ export function groupBoundsPx(bodies: Body[]): { min: Point; max: Point } {
 /** World-space point transform (metres). */
 type WorldTransform = (p: Point) => Point;
 
+function scaleMemberLocal(body: Body, p: { x: number; y: number }, sx: number, sy: number): Point {
+  return scaleLocalAboutWorldAxes(body.getAngle(), p, sx, sy);
+}
+
+function writeLocal(target: { x: number; y: number }, mapped: Point): void {
+  target.x = mapped.x;
+  target.y = mapped.y;
+}
+
+/** How much world-axis scale `sx, sy` stretches a body's local vector. */
+function axisStretch(body: Body, axis: { x: number; y: number }, sx: number, sy: number): number {
+  const world = body.getWorldVector(axis);
+  const original = Math.hypot(world.x, world.y);
+  const stretched = Math.hypot(world.x * sx, world.y * sy);
+  return stretched / Math.max(original, 1e-8);
+}
+
+function scaleLocalAxis(
+  axis: { x: number; y: number },
+  body: Body,
+  sx: number,
+  sy: number,
+  perp?: { x: number; y: number },
+): void {
+  const mapped = scaleMemberLocal(body, axis, sx, sy);
+  const len = Math.hypot(mapped.x, mapped.y);
+  if (len < 1e-8) return;
+  axis.x = mapped.x / len;
+  axis.y = mapped.y / len;
+  if (perp) {
+    perp.x = -axis.y;
+    perp.y = axis.x;
+  }
+}
+
 /**
  * After the members have been moved, keep joints consistent:
  * - anchors on non-members that are not shapes (the ground a pin hangs from) get the same world
@@ -84,8 +127,9 @@ type WorldTransform = (p: Point) => Point;
  * A's frame, so rotating body B alone (e.g. against a static rail or the ground) leaves them
  * stale until Play, when the joint pulls the pose back.
  */
-function fixJoints(bodies: Body[], transform: WorldTransform, scale: number): void {
+function fixJoints(bodies: Body[], transform: WorldTransform, sx: number, sy: number): void {
   const members = new Set(bodies);
+  const scaling = Math.abs(sx - 1) > 1e-4 || Math.abs(sy - 1) > 1e-4;
   for (const joint of groupJoints(bodies)) {
     const j = anchors(joint);
     if (!j) continue;
@@ -100,9 +144,8 @@ function fixJoints(bodies: Body[], transform: WorldTransform, scale: number): vo
         j.m_localAnchorA.x = local.x;
         j.m_localAnchorA.y = local.y;
       }
-    } else if (scale !== 1) {
-      j.m_localAnchorA.x *= scale;
-      j.m_localAnchorA.y *= scale;
+    } else if (scaling) {
+      writeLocal(j.m_localAnchorA, scaleMemberLocal(bodyA, j.m_localAnchorA, sx, sy));
     }
 
     if (!members.has(bodyB)) {
@@ -112,27 +155,38 @@ function fixJoints(bodies: Body[], transform: WorldTransform, scale: number): vo
         j.m_localAnchorB.x = local.x;
         j.m_localAnchorB.y = local.y;
       }
-    } else if (scale !== 1) {
-      j.m_localAnchorB.x *= scale;
-      j.m_localAnchorB.y *= scale;
+    } else if (scaling) {
+      writeLocal(j.m_localAnchorB, scaleMemberLocal(bodyB, j.m_localAnchorB, sx, sy));
     }
 
-    if (scale !== 1) {
+    if (scaling) {
       const data = joint.getUserData() as JointUserData | undefined;
       if (data?.localA && members.has(bodyA)) {
-        data.localA = { x: data.localA.x * scale, y: data.localA.y * scale };
+        data.localA = scaleMemberLocal(bodyA, data.localA, sx, sy);
       }
       if (data?.localB && members.has(bodyB)) {
-        data.localB = { x: data.localB.x * scale, y: data.localB.y * scale };
+        data.localB = scaleMemberLocal(bodyB, data.localB, sx, sy);
       }
       if (joint instanceof DistanceJoint || joint.getType() === DistanceJoint.TYPE) {
         const rod = joint as DistanceJoint;
-        rod.setLength(rod.getLength() * scale);
+        const a = bodyA.getWorldPoint(j.m_localAnchorA);
+        const b = bodyB.getWorldPoint(j.m_localAnchorB);
+        rod.setLength(Math.hypot(b.x - a.x, b.y - a.y));
+      }
+      let travelScale = 1;
+      if (joint.getType() === PrismaticJoint.TYPE) {
+        const slider = joint as PrismaticJoint;
+        if (slider.isLimitEnabled()) {
+          travelScale = axisStretch(bodyA, slider.getLocalAxisA(), sx, sy);
+        }
+      }
+      if (j.m_localXAxisA && members.has(bodyA)) {
+        scaleLocalAxis(j.m_localXAxisA, bodyA, sx, sy, j.m_localYAxisA);
       }
       if (joint.getType() === PrismaticJoint.TYPE) {
         const slider = joint as PrismaticJoint;
         if (slider.isLimitEnabled()) {
-          slider.setLimits(slider.getLowerLimit() * scale, slider.getUpperLimit() * scale);
+          slider.setLimits(slider.getLowerLimit() * travelScale, slider.getUpperLimit() * travelScale);
         }
       }
     }
@@ -153,7 +207,7 @@ export function translateGroup(bodies: Body[], d: Point): void {
     const p = body.getPosition();
     body.setPosition({ x: p.x + d.x, y: p.y + d.y });
   }
-  fixJoints(bodies, (p) => ({ x: p.x + d.x, y: p.y + d.y }), 1);
+  fixJoints(bodies, (p) => ({ x: p.x + d.x, y: p.y + d.y }), 1, 1);
   finish(bodies);
 }
 
@@ -170,22 +224,22 @@ export function rotateGroup(bodies: Body[], c: Point, dAngle: number): void {
   for (const body of bodies) {
     body.setTransform(rotate(body.getPosition()), body.getAngle() + dAngle);
   }
-  fixJoints(bodies, rotate, 1);
+  fixJoints(bodies, rotate, 1, 1);
   finish(bodies);
 }
 
-/** Uniformly scale every member by `factor` about world point `c` (metres). */
-export function scaleGroup(bodies: Body[], c: Point, factor: number): void {
-  if (Math.abs(factor - 1) < 1e-4) return;
+/** Scale every member by `(sx, sy)` about world point `c` (metres). Uniform when `sy` is omitted. */
+export function scaleGroup(bodies: Body[], c: Point, sx: number, sy = sx): void {
+  if (Math.abs(sx - 1) < 1e-4 && Math.abs(sy - 1) < 1e-4) return;
   const scale: WorldTransform = (p) => ({
-    x: c.x + (p.x - c.x) * factor,
-    y: c.y + (p.y - c.y) * factor,
+    x: c.x + (p.x - c.x) * sx,
+    y: c.y + (p.y - c.y) * sy,
   });
   for (const body of bodies) {
-    scaleBody(body, factor);
+    scaleBody(body, sx, sy);
     body.setPosition(scale(body.getPosition()));
   }
-  fixJoints(bodies, scale, factor);
+  fixJoints(bodies, scale, sx, sy);
   finish(bodies);
 }
 

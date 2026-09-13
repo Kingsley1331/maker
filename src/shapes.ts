@@ -751,27 +751,71 @@ export interface FixtureJson {
   restitution: number;
 }
 
-/** Read a body's fixtures as plain data, scaling geometry about the body origin by `factor`. */
-export function fixtureSpecs(body: Body, factor = 1): FixtureJson[] {
+type LocalMap = (v: { x: number; y: number }) => Point;
+
+/**
+ * Map a body-local point by world-axis scale `sx, sy`: `R^T * diag(sx, sy) * R`. Uniform scale
+ * (`sx === sy`) is just a multiply, so it commutes with the body's rotation.
+ */
+export function scaleLocalAboutWorldAxes(
+  angle: number,
+  p: { x: number; y: number },
+  sx: number,
+  sy: number,
+): Point {
+  if (Math.abs(sx - sy) < 1e-4) return { x: p.x * sx, y: p.y * sx };
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  const wx = c * p.x - s * p.y;
+  const wy = s * p.x + c * p.y;
+  const tx = wx * sx;
+  const ty = wy * sy;
+  return { x: c * tx + s * ty, y: -s * tx + c * ty };
+}
+
+/**
+ * Read a body's fixtures as plain data. `map` transforms each local point; when
+ * `circleRadiusScale` is null, circles become polygons (Planck has no ellipse).
+ */
+function mapFixtureSpecs(
+  body: Body,
+  map: LocalMap,
+  circleRadiusScale: number | null,
+): FixtureJson[] {
   const specs: FixtureJson[] = [];
-  const scale = (v: { x: number; y: number }): Point => ({ x: v.x * factor, y: v.y * factor });
   for (let f = body.getFixtureList(); f; f = f.getNext()) {
     const shape = f.getShape();
     const type = shape.getType();
     let json: ShapeJson | null = null;
     if (type === "circle") {
       const circle = shape as import("planck").CircleShape;
-      json = { type: "circle", center: scale(circle.getCenter()), radius: circle.getRadius() * factor };
+      const center = circle.getCenter();
+      if (circleRadiusScale !== null) {
+        json = {
+          type: "circle",
+          center: map(center),
+          radius: circle.getRadius() * circleRadiusScale,
+        };
+      } else {
+        json = {
+          type: "polygon",
+          vertices: regularPolygon(Settings.maxPolygonVertices, circle.getRadius()).map((p) =>
+            map({ x: p.x + center.x, y: p.y + center.y }),
+          ),
+        };
+      }
     } else if (type === "polygon") {
       const poly = shape as import("planck").PolygonShape;
-      json = { type: "polygon", vertices: poly.m_vertices.slice(0, poly.m_count).map(scale) };
+      json = { type: "polygon", vertices: poly.m_vertices.slice(0, poly.m_count).map(map) };
     } else if (type === "edge") {
       const edge = shape as import("planck").EdgeShape;
-      json = { type: "edge", v1: scale(edge.m_vertex1), v2: scale(edge.m_vertex2) };
+      json = { type: "edge", v1: map(edge.m_vertex1), v2: map(edge.m_vertex2) };
     } else if (type === "chain") {
       const chain = shape as import("planck").ChainShape;
-      const raw = chain.m_isLoop ? chain.m_vertices.slice(0, chain.m_count - 1) : chain.m_vertices.slice(0, chain.m_count);
-      json = { type: "chain", vertices: raw.map(scale), loop: chain.m_isLoop };
+      const raw = chain.m_isLoop
+        ? chain.m_vertices.slice(0, chain.m_count - 1)
+        : chain.m_vertices.slice(0, chain.m_count);
+      json = { type: "chain", vertices: raw.map(map), loop: chain.m_isLoop };
     }
     if (!json) continue;
     specs.push({
@@ -784,6 +828,11 @@ export function fixtureSpecs(body: Body, factor = 1): FixtureJson[] {
   // Planck prepends new fixtures, so the list is newest-first; return creation order instead so
   // re-applying the specs reproduces the same list.
   return specs.reverse();
+}
+
+/** Read a body's fixtures as plain data, scaling geometry about the body origin by `factor`. */
+export function fixtureSpecs(body: Body, factor = 1): FixtureJson[] {
+  return mapFixtureSpecs(body, (v) => ({ x: v.x * factor, y: v.y * factor }), factor);
 }
 
 function shapeFromJson(json: ShapeJson): Circle | Polygon | Edge | Chain {
@@ -811,24 +860,31 @@ export function applyFixtureSpecs(body: Body, specs: FixtureJson[]): void {
   }
 }
 
-/** Uniform scale about the body origin. Recreates fixtures; Planck has no Body.scale. */
-export function scaleBody(body: Body, factor: number): void {
-  if (Math.abs(factor - 1) < 1e-4) return;
+/**
+ * Scale about the body origin. Uniform (`sy` omitted or equal to `sx`) keeps circles as circles.
+ * Non-uniform is a world-axis stretch (`R^T * diag(sx, sy) * R`); circles become polygons.
+ * Recreates fixtures; Planck has no Body.scale.
+ */
+export function scaleBody(body: Body, sx: number, sy = sx): void {
+  if (Math.abs(sx - 1) < 1e-4 && Math.abs(sy - 1) < 1e-4) return;
 
   const fixtures: FixtureLike[] = [];
   for (let f = body.getFixtureList(); f; f = f.getNext()) fixtures.push(f);
 
-  const rebuilt = fixtureSpecs(body, factor);
+  const angle = body.getAngle();
+  const uniform = Math.abs(sx - sy) < 1e-4;
+  const map = (v: { x: number; y: number }): Point => scaleLocalAboutWorldAxes(angle, v, sx, sy);
+  const rebuilt = mapFixtureSpecs(body, map, uniform ? sx : null);
 
   for (const f of fixtures) body.destroyFixture(f);
   applyFixtureSpecs(body, rebuilt);
 
   const data = getBodyData(body);
   if (data?.outline) {
-    data.outline = data.outline.map((p) => ({ x: p.x * factor, y: p.y * factor }));
+    data.outline = data.outline.map(map);
   }
   if (data?.holes) {
-    data.holes = data.holes.map((ring) => ring.map((p) => ({ x: p.x * factor, y: p.y * factor })));
+    data.holes = data.holes.map((ring) => ring.map(map));
   }
   body.synchronizeFixtures();
   body.setAwake(true);

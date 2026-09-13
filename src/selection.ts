@@ -52,14 +52,12 @@ const VERTEX_RADIUS = 3;
 const VERTEX_HOVER_RADIUS = 4.5;
 const VERTEX_HIT_RADIUS = 7;
 
-interface Handle {
-  kind: "scale" | "rotate";
-  x: number;
-  y: number;
-  cursor: string;
-}
+type Handle =
+  | { kind: "scale"; x: number; y: number; cursor: string }
+  | { kind: "stretch"; axis: "x" | "y"; x: number; y: number; cursor: string }
+  | { kind: "rotate"; x: number; y: number; cursor: string };
 
-type Interaction = "none" | "scale" | "rotate" | "vertex";
+type Interaction = "none" | "scale" | "stretch" | "rotate" | "vertex";
 
 export interface SelectionOptions {
   canvas: HTMLCanvasElement;
@@ -105,7 +103,7 @@ export interface Selection {
   deselect(): void;
   /** Move everything selected by `dPx` pixels. */
   translate(dPx: Point): void;
-  /** True while a handle drag (scale, rotate, or vertex) is in progress. */
+  /** True while a handle drag (scale, stretch, rotate, or vertex) is in progress. */
   readonly isInteracting: boolean;
 }
 
@@ -137,12 +135,13 @@ export function createSelection({
 
   // Handle drag state
   let interaction: Interaction = "none";
-  /** Pivot (px) for the current scale / rotate drag: the box centre at press time. */
+  /** Pivot (px) for the current scale / stretch / rotate drag: the box centre at press time. */
   let pivot: Point = { x: 0, y: 0 };
-  // scale
+  // scale / stretch
   let startDist = 0;
   let startWidth = 0;
   let applied = 1;
+  let stretchAxis: "x" | "y" = "x";
   // rotate
   let lastPointerAngle = 0;
   let accumulated = 0;
@@ -299,9 +298,13 @@ export function createSelection({
     const r = boxRect();
     return [
       { kind: "scale", x: r.x, y: r.y, cursor: "nwse-resize" },
+      { kind: "stretch", axis: "y", x: r.x + r.w / 2, y: r.y, cursor: "ns-resize" },
       { kind: "scale", x: r.x + r.w, y: r.y, cursor: "nesw-resize" },
+      { kind: "stretch", axis: "x", x: r.x + r.w, y: r.y + r.h / 2, cursor: "ew-resize" },
       { kind: "scale", x: r.x + r.w, y: r.y + r.h, cursor: "nwse-resize" },
+      { kind: "stretch", axis: "y", x: r.x + r.w / 2, y: r.y + r.h, cursor: "ns-resize" },
       { kind: "scale", x: r.x, y: r.y + r.h, cursor: "nesw-resize" },
+      { kind: "stretch", axis: "x", x: r.x, y: r.y + r.h / 2, cursor: "ew-resize" },
       {
         kind: "rotate",
         x: r.x + r.w / 2,
@@ -492,6 +495,24 @@ export function createSelection({
       return;
     }
 
+    if (interaction === "stretch") {
+      const dist =
+        stretchAxis === "x" ? Math.abs(p.x - pivot.x) : Math.abs(p.y - pivot.y);
+      const desired = Math.min(
+        Math.max(startWidth * (dist / startDist), MIN_WIDTH),
+        maxWidth(),
+      );
+      const total = desired / startWidth;
+      const factor = total / applied;
+
+      if (Math.abs(factor - 1) > 1e-4) {
+        if (stretchAxis === "x") scaleGroup(members, pivotM, factor, 1);
+        else scaleGroup(members, pivotM, 1, factor);
+        applied = total;
+      }
+      return;
+    }
+
     // Rotate: accumulate pointer travel around the pivot, optionally snapped to 15 degrees.
     const angle = pointerAngle(p);
     let delta = angle - lastPointerAngle;
@@ -576,6 +597,20 @@ export function createSelection({
         startWidth = Math.max(bounds.max.x - bounds.min.x, 1);
         applied = 1;
         interaction = "scale";
+        guides.clear();
+      } else if (handle.kind === "stretch") {
+        stretchAxis = handle.axis;
+        const bounds = groupBoundsPx(members);
+        if (stretchAxis === "x") {
+          startDist = Math.max(Math.abs(p.x - pivot.x), 1);
+          startWidth = Math.max(bounds.max.x - bounds.min.x, 1);
+        } else {
+          startDist = Math.max(Math.abs(p.y - pivot.y), 1);
+          startWidth = Math.max(bounds.max.y - bounds.min.y, 1);
+        }
+        applied = 1;
+        interaction = "stretch";
+        canvas.style.cursor = handle.cursor;
         guides.clear();
       } else {
         lastPointerAngle = pointerAngle(p);
