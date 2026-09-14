@@ -1234,7 +1234,7 @@ export function setupUi({
     {
       angleDeg: { format: degrees },
       intensity: { format: (v) => v.toFixed(2) },
-      frequency: { format: (v) => `${Math.round(v)} /s` },
+      frequency: { format: (v) => `${Math.round(v)} /s/m` },
     },
     onStreamChange,
   );

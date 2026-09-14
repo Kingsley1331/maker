@@ -12,7 +12,11 @@ export const HIT_FADE_SECONDS = 0.15;
 const MAX_HITS = 256;
 
 interface StreamState {
-  /** Simulated seconds accumulated since the last emitted particle. */
+  /**
+   * Exposure (metre-seconds: exposed width x simulated time) accumulated since the last emitted
+   * particle. Counting in exposure rather than time makes the hit rate scale with the body's
+   * width facing the stream, like an external stream of particles.
+   */
   acc: number;
   /** Next index into the low-discrepancy sequence. */
   index: number;
@@ -20,7 +24,7 @@ interface StreamState {
   pending: number | null;
   /** Running sum of each pair's leading offset from the centre; kept near zero. */
   lead: number;
-  /** Seconds until the next randomised emission; unused when the stream is even. */
+  /** Exposure (metre-seconds) until the next randomised emission; unused when the stream is even. */
   wait: number;
 }
 
@@ -81,25 +85,30 @@ function recordHit(point: Point): void {
   hits.push({ point, time: simTime });
 }
 
-/** Exponential waiting time with mean `1 / rate`, for a Poisson process of that rate. */
-function exponentialWait(rate: number): number {
+/** Exponential waiting exposure with mean `1 / flux`, for a Poisson process of that flux. */
+function exponentialWait(flux: number): number {
   let u = Math.random();
   while (u <= 0) u = Math.random();
-  return -Math.log(u) / rate;
+  return -Math.log(u) / flux;
 }
 
-function howManyThisStep(state: StreamState, frequency: number, dt: number, random: boolean): number {
-  state.acc += dt;
+/**
+ * Particles to fire this step. `flux` is particles per second per metre of exposed width and
+ * `exposure` is this step's width x dt, so the mean count is `flux x exposure` either way; the
+ * even stream spaces them exactly, the random one draws Poisson arrivals.
+ */
+function howManyThisStep(state: StreamState, flux: number, exposure: number, random: boolean): number {
+  state.acc += exposure;
   if (!random) {
-    const count = Math.floor(state.acc * frequency);
-    if (count > 0) state.acc -= count / frequency;
+    const count = Math.floor(state.acc * flux);
+    if (count > 0) state.acc -= count / flux;
     return count;
   }
-  if (state.wait <= 0) state.wait = exponentialWait(frequency);
+  if (state.wait <= 0) state.wait = exponentialWait(flux);
   let count = 0;
   while (state.acc >= state.wait) {
     state.acc -= state.wait;
-    state.wait = exponentialWait(frequency);
+    state.wait = exponentialWait(flux);
     count++;
   }
   return count;
@@ -114,15 +123,19 @@ function stepBody(body: Body, stream: ParticleStream, dt: number): void {
   const frequency = Math.max(0, stream.frequency);
   if (frequency <= 0 || stream.intensity <= 0) return;
 
-  const random = stream.random === true;
-  const count = howManyThisStep(state, frequency, dt, random);
-  if (count <= 0) return;
-
   const dir = directionOf(stream.angleDeg);
   const side = { x: -dir.y, y: dir.x };
 
+  // Width of the silhouette facing the stream; the hit rate is proportional to it.
   const extent = extentAlong(body, side);
   if (!extent) return;
+  const width = extent.max - extent.min;
+  if (width <= 0) return;
+
+  const random = stream.random === true;
+  const count = howManyThisStep(state, frequency, dt * width, random);
+  if (count <= 0) return;
+
   const along = extentAlong(body, dir);
   if (!along) return;
   const reach = along.max - along.min + RAY_MARGIN * 2;

@@ -121,7 +121,10 @@ export interface ParticleStream extends Scheduled {
   angleDeg: number;
   /** Impulse per particle, N·s. */
   intensity: number;
-  /** Particles per second. */
+  /**
+   * Particles per second per metre of exposed width (the silhouette facing the stream), so hits
+   * per unit length do not depend on the body's size.
+   */
   frequency: number;
   /**
    * When true, timing, impulse, and hit position vary while keeping the same mean rate and
