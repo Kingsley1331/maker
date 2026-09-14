@@ -33,12 +33,13 @@ import { isPickable } from "./shapes";
 import type { ActiveTool } from "./ui";
 import { vecToMeters, type Point } from "./units";
 
-const BOX_PADDING = 6;
+/** Screen pixels; divided by zoom so overlay chrome stays a constant size. */
+const BOX_PADDING = 10;
 const HANDLE_SIZE = 10;
 const HANDLE_HIT_RADIUS = 9;
 const MIN_WIDTH = 12;
 
-/** Distance of the rotation knob above the top edge of the box. */
+/** Distance of the rotation knob above the top edge of the box (screen px). */
 const ROTATE_OFFSET = 24;
 const ROTATE_KNOB_RADIUS = 6;
 const ROTATE_HIT_RADIUS = 10;
@@ -58,6 +59,10 @@ type Handle =
   | { kind: "stretch"; axis: "x" | "y"; x: number; y: number; cursor: string }
   | { kind: "rotate"; x: number; y: number; cursor: string }
   | { kind: "mirror"; x: number; y: number; cursor: string };
+
+type Control =
+  | { kind: "vertex"; vertex: VertexHandle }
+  | { kind: "handle"; handle: Handle };
 
 type Interaction = "none" | "scale" | "stretch" | "rotate" | "vertex";
 
@@ -269,6 +274,10 @@ export function createSelection({
     onJointSelectionUpdate(null);
   }
 
+  function screenPx(px: number): number {
+    return px / getZoom();
+  }
+
   function rectOf(bounds: { min: Point; max: Point }): {
     x: number;
     y: number;
@@ -276,11 +285,12 @@ export function createSelection({
     h: number;
   } {
     const { min, max } = bounds;
+    const pad = screenPx(BOX_PADDING);
     return {
-      x: min.x - BOX_PADDING,
-      y: min.y - BOX_PADDING,
-      w: max.x - min.x + BOX_PADDING * 2,
-      h: max.y - min.y + BOX_PADDING * 2,
+      x: min.x - pad,
+      y: min.y - pad,
+      w: max.x - min.x + pad * 2,
+      h: max.y - min.y + pad * 2,
     };
   }
 
@@ -296,6 +306,7 @@ export function createSelection({
 
   function handles(): Handle[] {
     const r = boxRect();
+    const rotateOffset = screenPx(ROTATE_OFFSET);
     return [
       { kind: "scale", x: r.x, y: r.y, cursor: "nwse-resize" },
       { kind: "stretch", axis: "y", x: r.x + r.w / 2, y: r.y, cursor: "ns-resize" },
@@ -308,13 +319,13 @@ export function createSelection({
       {
         kind: "rotate",
         x: r.x + r.w / 2,
-        y: r.y - ROTATE_OFFSET,
+        y: r.y - rotateOffset,
         cursor: "grab",
       },
       {
         kind: "mirror",
         x: r.x + r.w / 2,
-        y: r.y + r.h + ROTATE_OFFSET,
+        y: r.y + r.h + rotateOffset,
         cursor: "pointer",
       },
     ];
@@ -369,6 +380,43 @@ export function createSelection({
     return best;
   }
 
+  /**
+   * When a vertex and a transform handle both contain the pointer, pick the closer
+   * centre. Exact ties prefer the handle so resize stays reachable at AABB extremes.
+   */
+  function hitControl(point: Point): Control | null {
+    const vertex = hitVertex(point);
+    const handle = hitHandle(point);
+    if (vertex && handle) {
+      const towardVertex = unwrapToward(point, vertex.worldPx);
+      const towardHandle = unwrapToward(point, { x: handle.x, y: handle.y });
+      const vertexDist = Math.hypot(
+        towardVertex.x - vertex.worldPx.x,
+        towardVertex.y - vertex.worldPx.y,
+      );
+      const handleDist = Math.hypot(
+        towardHandle.x - handle.x,
+        towardHandle.y - handle.y,
+      );
+      if (vertexDist < handleDist) return { kind: "vertex", vertex };
+      return { kind: "handle", handle };
+    }
+    if (vertex) return { kind: "vertex", vertex };
+    if (handle) return { kind: "handle", handle };
+    return null;
+  }
+
+  function applyHover(point: Point): void {
+    const hit = hitControl(point);
+    if (hit?.kind === "vertex") {
+      hoveredVertex = hit.vertex.ref;
+      canvas.style.cursor = "grab";
+      return;
+    }
+    hoveredVertex = null;
+    canvas.style.cursor = hit ? hit.handle.cursor : "";
+  }
+
   function unwrapToward(point: Point, around: Point): Point {
     return nearestWrapPoint(point, around, getWrapOffsets());
   }
@@ -395,6 +443,9 @@ export function createSelection({
   onAfterRender((ctx) => {
     if (!selected || members.length === 0 || isCut()) return;
     const r = boxRect();
+    const zoom = getZoom();
+    const handleSize = screenPx(HANDLE_SIZE);
+    const rotateKnob = screenPx(ROTATE_KNOB_RADIUS);
 
     withWrapOffsets(ctx, getWrapOffsets(), () => {
       ctx.save();
@@ -409,32 +460,49 @@ export function createSelection({
         ctx.globalAlpha = 0.45;
         ctx.lineWidth = 1;
         ctx.setLineDash([3, 3]);
+        const inset = screenPx(3);
         for (const body of members) {
           const m = rectOf(bodyBoundsPx(body));
-          ctx.strokeRect(m.x + 3, m.y + 3, m.w - 6, m.h - 6);
+          ctx.strokeRect(m.x + inset, m.y + inset, m.w - inset * 2, m.h - inset * 2);
         }
         ctx.restore();
       }
       ctx.setLineDash([]);
 
+      const verts = vertexDrag ? verticesOfDrag(vertexDrag) : vertexHandles();
+      const stroke = 1 / zoom;
+      for (const vertex of verts) {
+        const hover = refsEqual(hoveredVertex, vertex.ref);
+        const radius = (hover ? VERTEX_HOVER_RADIUS : VERTEX_RADIUS) / zoom;
+        ctx.beginPath();
+        ctx.arc(vertex.worldPx.x, vertex.worldPx.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = VERTEX_FILL;
+        ctx.fill();
+        ctx.lineWidth = stroke;
+        ctx.strokeStyle = VERTEX_STROKE;
+        ctx.stroke();
+      }
+
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = ACCENT;
       ctx.fillStyle = "#ffffff";
       for (const h of handles()) {
         if (h.kind === "rotate" || h.kind === "mirror") {
           ctx.beginPath();
           if (h.kind === "mirror") {
             ctx.moveTo(h.x, r.y + r.h);
-            ctx.lineTo(h.x, h.y - ROTATE_KNOB_RADIUS);
+            ctx.lineTo(h.x, h.y - rotateKnob);
           } else {
             ctx.moveTo(h.x, r.y);
-            ctx.lineTo(h.x, h.y + ROTATE_KNOB_RADIUS);
+            ctx.lineTo(h.x, h.y + rotateKnob);
           }
           ctx.stroke();
           ctx.beginPath();
-          ctx.arc(h.x, h.y, ROTATE_KNOB_RADIUS, 0, Math.PI * 2);
+          ctx.arc(h.x, h.y, rotateKnob, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
           if (h.kind === "mirror") {
-            const s = ROTATE_KNOB_RADIUS * 0.45;
+            const s = rotateKnob * 0.45;
             ctx.beginPath();
             ctx.moveTo(h.x, h.y - s);
             ctx.lineTo(h.x, h.y + s);
@@ -456,33 +524,18 @@ export function createSelection({
           }
         } else {
           ctx.fillRect(
-            h.x - HANDLE_SIZE / 2,
-            h.y - HANDLE_SIZE / 2,
-            HANDLE_SIZE,
-            HANDLE_SIZE,
+            h.x - handleSize / 2,
+            h.y - handleSize / 2,
+            handleSize,
+            handleSize,
           );
           ctx.strokeRect(
-            h.x - HANDLE_SIZE / 2,
-            h.y - HANDLE_SIZE / 2,
-            HANDLE_SIZE,
-            HANDLE_SIZE,
+            h.x - handleSize / 2,
+            h.y - handleSize / 2,
+            handleSize,
+            handleSize,
           );
         }
-      }
-
-      const zoom = getZoom();
-      const stroke = 1 / zoom;
-      const verts = vertexDrag ? verticesOfDrag(vertexDrag) : vertexHandles();
-      for (const vertex of verts) {
-        const hover = refsEqual(hoveredVertex, vertex.ref);
-        const radius = (hover ? VERTEX_HOVER_RADIUS : VERTEX_RADIUS) / zoom;
-        ctx.beginPath();
-        ctx.arc(vertex.worldPx.x, vertex.worldPx.y, radius, 0, Math.PI * 2);
-        ctx.fillStyle = VERTEX_FILL;
-        ctx.fill();
-        ctx.lineWidth = stroke;
-        ctx.strokeStyle = VERTEX_STROKE;
-        ctx.stroke();
       }
       ctx.restore();
     });
@@ -568,9 +621,7 @@ export function createSelection({
     guides.clear();
     window.removeEventListener("mousemove", onMove);
     window.removeEventListener("mouseup", onUp);
-    const vertex = hitVertex(canvasPoint(event));
-    hoveredVertex = vertex ? vertex.ref : null;
-    canvas.style.cursor = vertex ? "grab" : "";
+    applyHover(canvasPoint(event));
   }
 
   // Capture phase so this runs before the input module's listener.
@@ -586,15 +637,15 @@ export function createSelection({
       )
         return;
       const raw = canvasPoint(event);
-      const vertex = hitVertex(raw);
-      if (vertex) {
-        const drag = startVertexDrag(members[0], vertex.ref);
+      const hit = hitControl(raw);
+      if (hit?.kind === "vertex") {
+        const drag = startVertexDrag(members[0], hit.vertex.ref);
         if (drag) {
           event.stopImmediatePropagation();
           event.preventDefault();
           vertexDrag = drag;
-          vertexAround = vertex.worldPx;
-          hoveredVertex = vertex.ref;
+          vertexAround = hit.vertex.worldPx;
+          hoveredVertex = hit.vertex.ref;
           interaction = "vertex";
           canvas.style.cursor = "grabbing";
           guides.clear();
@@ -604,7 +655,7 @@ export function createSelection({
         }
       }
 
-      const handle = hitHandle(raw);
+      const handle = hit?.kind === "handle" ? hit.handle : hitHandle(raw);
       if (!handle) return;
 
       event.stopImmediatePropagation();
@@ -664,16 +715,7 @@ export function createSelection({
       hoveredVertex = null;
       return;
     }
-    const point = canvasPoint(event);
-    const vertex = hitVertex(point);
-    if (vertex) {
-      hoveredVertex = vertex.ref;
-      canvas.style.cursor = "grab";
-      return;
-    }
-    hoveredVertex = null;
-    const handle = hitHandle(point);
-    canvas.style.cursor = handle ? handle.cursor : "";
+    applyHover(canvasPoint(event));
   });
 
   canvas.addEventListener("mouseleave", () => {
