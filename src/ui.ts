@@ -76,7 +76,7 @@ export interface UiOptions {
   onJointDampingChange(ratio: number): void;
   /** Called when the Static / Dynamic / Kinematic control is used on the current selection. */
   onBodyTypeChange(type: BodyType): void;
-  /** Called when the Walls only checkbox is toggled on the current selection. */
+  /** Called when the No Collisions checkbox is toggled on the current selection. */
   onWallsOnlyChange(enabled: boolean): void;
   onMassChange(mass: number): void;
   onElasticityChange(value: number): void;
