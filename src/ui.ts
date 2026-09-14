@@ -903,8 +903,8 @@ export function setupUi({
 
   selectionColor.addEventListener("input", () => onColorChange(selectionColor.value));
 
-  /** Numeric setting keys of a scheduled feature (everything except the schedule itself). */
-  type NumericKeys<T> = Exclude<keyof T, "schedule">;
+  /** Numeric setting keys of a scheduled feature (everything except schedule / random flags). */
+  type NumericKeys<T> = Exclude<keyof T, "schedule" | "random">;
 
   /** Set a checkbox unless the user is on it right now. */
   function setCheckedIfUnfocused(input: HTMLInputElement, checked: boolean): void {
@@ -1089,7 +1089,8 @@ export function setupUi({
    * A list of per-selection feature instances (particle streams, directional forces). The "+"
    * button `#{prefix}-add` appends one; each instance is a clone of `#{prefix}-template` placed in
    * `#{prefix}-list`, with a slider per numeric setting (found by `data-role` = key, its readout by
-   * `data-role` = `{key}-value`), Always on / schedule controls, and a remove button.
+   * `data-role` = `{key}-value`), optional Randomise checkbox, Always on / schedule controls, and a
+   * remove button.
    * `onChange(index, value)` replaces the entry at `index` (appending when `index` equals the
    * list length); `onChange(index, null)` removes it.
    */
@@ -1111,6 +1112,8 @@ export function setupUi({
       inputs: Record<NumericKeys<T>, HTMLInputElement>;
       outputs: Record<NumericKeys<T>, HTMLOutputElement>;
       schedule: ScheduleControls;
+      /** Present only when the template has a Randomise checkbox (particle streams). */
+      random?: HTMLInputElement;
     }
     /** Rendered panels, parallel to the selection's list of settings. */
     let items: Item[] = [];
@@ -1121,9 +1124,10 @@ export function setupUi({
         const value = Number(item.inputs[key].value);
         numbers[key] = Number.isFinite(value) ? value : (defaults[key] as number);
       }
-      const out: Scheduled = { ...numbers };
+      const out: Scheduled & { random?: boolean } = { ...numbers };
       const schedule = item.schedule.read();
       if (schedule) out.schedule = schedule;
+      if (item.random?.checked) out.random = true;
       return out as T;
     }
 
@@ -1158,6 +1162,11 @@ export function setupUi({
       }
       const item = { root, title: requireRole<HTMLElement>(root, "title"), inputs, outputs } as Item;
       item.schedule = bindSchedule(root, () => emit(item));
+      const random = root.querySelector<HTMLInputElement>('[data-role="random"]');
+      if (random) {
+        item.random = random;
+        random.addEventListener("change", () => emit(item));
+      }
       for (const key of keys) inputs[key].addEventListener("input", () => emit(item));
       requireRole<HTMLButtonElement>(root, "remove").addEventListener("click", () => {
         const index = items.indexOf(item);
@@ -1175,6 +1184,9 @@ export function setupUi({
     function write(item: Item, value: T): void {
       for (const key of keys) setIfUnfocused(item.inputs[key], String(value[key]));
       item.schedule.sync(value.schedule);
+      if (item.random) {
+        setCheckedIfUnfocused(item.random, (value as { random?: boolean }).random === true);
+      }
       show(item, read(item));
     }
 

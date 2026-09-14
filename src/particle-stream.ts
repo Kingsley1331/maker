@@ -20,6 +20,8 @@ interface StreamState {
   pending: number | null;
   /** Running sum of each pair's leading offset from the centre; kept near zero. */
   lead: number;
+  /** Seconds until the next randomised emission; unused when the stream is even. */
+  wait: number;
 }
 
 export interface StreamHit {
@@ -79,19 +81,42 @@ function recordHit(point: Point): void {
   hits.push({ point, time: simTime });
 }
 
+/** Exponential waiting time with mean `1 / rate`, for a Poisson process of that rate. */
+function exponentialWait(rate: number): number {
+  let u = Math.random();
+  while (u <= 0) u = Math.random();
+  return -Math.log(u) / rate;
+}
+
+function howManyThisStep(state: StreamState, frequency: number, dt: number, random: boolean): number {
+  state.acc += dt;
+  if (!random) {
+    const count = Math.floor(state.acc * frequency);
+    if (count > 0) state.acc -= count / frequency;
+    return count;
+  }
+  if (state.wait <= 0) state.wait = exponentialWait(frequency);
+  let count = 0;
+  while (state.acc >= state.wait) {
+    state.acc -= state.wait;
+    state.wait = exponentialWait(frequency);
+    count++;
+  }
+  return count;
+}
+
 function stepBody(body: Body, stream: ParticleStream, dt: number): void {
   let state = states.get(stream);
   if (!state) {
-    state = { acc: 0, index: 1, pending: null, lead: 0 };
+    state = { acc: 0, index: 1, pending: null, lead: 0, wait: 0 };
     states.set(stream, state);
   }
   const frequency = Math.max(0, stream.frequency);
   if (frequency <= 0 || stream.intensity <= 0) return;
 
-  state.acc += dt;
-  const count = Math.floor(state.acc * frequency);
+  const random = stream.random === true;
+  const count = howManyThisStep(state, frequency, dt, random);
   if (count <= 0) return;
-  state.acc -= count / frequency;
 
   const dir = directionOf(stream.angleDeg);
   const side = { x: -dir.y, y: dir.x };
@@ -107,10 +132,10 @@ function stepBody(body: Body, stream: ParticleStream, dt: number): void {
   const startAlong = along.min - RAY_MARGIN;
   const centreAlong = centre.x * dir.x + centre.y * dir.y;
   const centreSide = centre.x * side.x + centre.y * side.y;
-  const impulse = { x: dir.x * stream.intensity, y: dir.y * stream.intensity };
 
   for (let k = 0; k < count; k++) {
-    const t = nextSample(state);
+    const t = random ? Math.random() : nextSample(state);
+    const mag = random ? Math.random() * 2 * stream.intensity : stream.intensity;
     const s = extent.min + t * (extent.max - extent.min);
     const p1 = {
       x: centre.x + (s - centreSide) * side.x + (startAlong - centreAlong) * dir.x,
@@ -119,7 +144,7 @@ function stepBody(body: Body, stream: ParticleStream, dt: number): void {
     const p2 = { x: p1.x + dir.x * reach, y: p1.y + dir.y * reach };
     const hit = rayHit(body, p1, p2);
     if (!hit) continue;
-    body.applyLinearImpulse(impulse, hit.point, true);
+    body.applyLinearImpulse({ x: dir.x * mag, y: dir.y * mag }, hit.point, true);
     recordHit(hit.point);
   }
 }

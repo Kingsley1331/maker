@@ -123,6 +123,11 @@ export interface ParticleStream extends Scheduled {
   intensity: number;
   /** Particles per second. */
   frequency: number;
+  /**
+   * When true, timing, impulse, and hit position vary while keeping the same mean rate and
+   * intensity; direction is unchanged. Absent / false is the even stream.
+   */
+  random?: boolean;
 }
 
 export const DEFAULT_STREAM: Readonly<ParticleStream> = {
