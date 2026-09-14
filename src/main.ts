@@ -291,13 +291,16 @@ async function loadScene(id: string): Promise<void> {
   }
 
   resetEditor();
+  // Unhide the canvas and measure it before wrap runs. Wrap uses the canvas size as its
+  // period; while the Scenes tab is showing that size is 1×1 and would teleport bodies.
+  scenesUi.showView("editor");
+  physics.syncLayout();
   deserializeScene(physics.world, physics.ground, scene);
   const { zoom, pan, ...settings } = scene.settings;
   ui.setSettings({ ...settings, wrap: settings.wrap === true });
   physics.setView(zoom, pan);
   ui.setZoom(zoom);
   setCurrentScene(scene);
-  scenesUi.showView("editor");
 }
 
 const scenesUi = setupScenesUi({

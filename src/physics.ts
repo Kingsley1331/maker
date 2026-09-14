@@ -96,6 +96,8 @@ export interface Physics {
   isWrapEnabled(): boolean;
   /** World-pixel offsets used to draw / hit-test wrap copies. Identity when wrap is off. */
   getWrapOffsets(): Point[];
+  /** Re-read the container size. Call after the editor is shown so wrap uses a real period. */
+  syncLayout(): void;
   /** Default bounce for walls and bodies that have not overridden elasticity. */
   setWorldRestitution(value: number): void;
   /** Surface friction for walls and user shapes. */
@@ -283,8 +285,23 @@ export function createPhysics(container: HTMLElement): Physics {
     offset = { x: offset.x + dx, y: offset.y + dy };
   }
 
+  /**
+   * Wrap's period is the canvas size. While the editor is hidden (Scenes tab) the container
+   * reports 0×0, which `sceneSize` floors to 1×1. Wrapping into that 1px torus would pile
+   * every shape at the origin, so skip wrap until both the live layout and `size` are real.
+   */
+  function wrapLayoutReady(): boolean {
+    return (
+      wrapEnabled &&
+      container.clientWidth > 1 &&
+      container.clientHeight > 1 &&
+      size.w > 1 &&
+      size.h > 1
+    );
+  }
+
   function currentWrapOffsets(): Point[] {
-    if (!wrapEnabled) return wrapOffsets(size, false);
+    if (!wrapLayoutReady()) return wrapOffsets(size, false);
     const tiles: Point[] = [];
     for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
       if (!isPickable(body)) continue;
@@ -305,7 +322,7 @@ export function createPhysics(container: HTMLElement): Physics {
   }
 
   function wrapBodies(): void {
-    if (!wrapEnabled) return;
+    if (!wrapLayoutReady()) return;
     const spanX = toMeters(size.w);
     const spanY = toMeters(size.h);
     const seen = new Set<Body>();
@@ -793,11 +810,12 @@ export function createPhysics(container: HTMLElement): Physics {
   let acc = 0;
 
   function advanceStep(): void {
-    if (wrapEnabled) ghosts.sync(size);
+    const wrapping = wrapLayoutReady();
+    if (wrapping) ghosts.sync(size);
     stepParticleStreams(world, STEP);
     stepDirectionalForces(world, STEP);
     world.step(STEP, VELOCITY_ITERATIONS, POSITION_ITERATIONS);
-    if (wrapEnabled) ghosts.apply(STEP);
+    if (wrapping) ghosts.apply(STEP);
     stepCount += 1;
   }
 
@@ -988,6 +1006,7 @@ export function createPhysics(container: HTMLElement): Physics {
     },
     isWrapEnabled: () => wrapEnabled,
     getWrapOffsets: currentWrapOffsets,
+    syncLayout: () => resize(),
     pause(): void {
       if (paused) return;
       paused = true;
