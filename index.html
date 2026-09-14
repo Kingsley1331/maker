@@ -595,6 +595,10 @@
           <button type="button" data-body-type="dynamic">Dynamic</button>
           <button type="button" data-body-type="kinematic">Kinematic</button>
         </div>
+        <label class="check-row" for="walls-only" title="Pass through other shapes; still bump into the canvas walls (and through everything if wrap is on)">
+          <span class="label">Walls only</span>
+          <input id="walls-only" type="checkbox" />
+        </label>
         <div class="selection-actions">
           <button id="selection-duplicate" type="button" title="Duplicate (Ctrl+D)">Duplicate</button>
           <button id="selection-delete" type="button" title="Delete">Delete</button>
@@ -764,6 +768,11 @@
             any shape that has not been overridden. A selected shape's Elasticity field pins that
             value so later global changes leave it alone. Collisions use the higher of the two
             objects.
+          </li>
+          <li>
+            <strong>Walls only:</strong> check this on a selected shape so it passes through other
+            shapes and still bumps into the canvas walls. With wrap edges on there are no walls, so
+            it passes through everything.
           </li>
           <li>
             <strong>Air drag / Friction:</strong> Air drag slows motion through the air; Friction

@@ -14,6 +14,7 @@ import { connectedBodies, translateGroup } from "./group";
 import { getAngleLimitArc, getJointFrequency, getTravelLimitSegment, jointDrawEndsPx, jointEndHit, jointSelectDistPx, MOTOR_JOINT_HIT_PX, type JointEnd } from "./joints";
 import {
   FIXTURE,
+  WALL_CATEGORY,
   getBodyData,
   getDefaultDamping,
   getDefaultFriction,
@@ -373,6 +374,7 @@ export function createPhysics(container: HTMLElement): Physics {
         shape: new Box(vecToMeters({ x: hw, y: hh }).x, vecToMeters({ x: hw, y: hh }).y),
         ...FIXTURE,
         density: 0,
+        filterCategoryBits: WALL_CATEGORY,
       });
       return body;
     }

@@ -12,7 +12,7 @@ import {
 } from "./scene-serialize";
 import { countScenes, getScene, putScene } from "./scene-store";
 import { setupScenesUi } from "./scenes-ui";
-import { getBodyData, setBodyMass, setBodyRestitution } from "./shapes";
+import { applyCollisionFilter, getBodyData, setBodyMass, setBodyRestitution } from "./shapes";
 import { setupUi } from "./ui";
 import { vecToMeters } from "./units";
 
@@ -95,6 +95,16 @@ const ui = setupUi({
         body.setLinearVelocity({ x: 0, y: 0 });
         body.setAngularVelocity(0);
       }
+      body.setAwake(true);
+    }
+  },
+  onWallsOnlyChange: (enabled) => {
+    for (const body of input.selection.members) {
+      const data = getBodyData(body);
+      if (!data || data.kind !== "shape") continue;
+      if (enabled) data.wallsOnly = true;
+      else delete data.wallsOnly;
+      applyCollisionFilter(body);
       body.setAwake(true);
     }
   },

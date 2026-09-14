@@ -161,6 +161,11 @@ export interface BodyUserData {
   streams?: ParticleStream[];
   /** Steady pressures pushing the shape's facing edges while the sim runs (absent = none). */
   winds?: DirectionalForce[];
+  /**
+   * When true, fixtures only collide with canvas boundary walls (`kind: "wall"`), not other
+   * shapes or wrap ghosts. Omitted means collide with everything (the default).
+   */
+  wallsOnly?: boolean;
 }
 
 /** Body data as written by older saves, which carried at most one stream and one force. */
@@ -202,6 +207,13 @@ export const FIXTURE = {
     return defaultRestitution;
   },
 };
+
+/** Planck filter bit for user shapes (the engine default). */
+export const SHAPE_CATEGORY = 0x0001;
+/** Wrap-mode ghost fixtures; they never collide with each other. */
+export const GHOST_CATEGORY = 0x0002;
+/** Canvas boundary walls. Walls-only shapes mask to this bit alone. */
+export const WALL_CATEGORY = 0x0004;
 
 let defaultRestitution = RESTITUTION;
 let defaultFriction = FRICTION;
@@ -282,6 +294,26 @@ export function getBodyData(body: Body): BodyUserData | undefined {
 
 export function isPickable(body: Body): boolean {
   return getBodyData(body)?.kind === "shape";
+}
+
+/**
+ * Apply category/mask bits from `kind` and `wallsOnly`. Call after creating fixtures or
+ * toggling the flag; `setFilterData` refilters so overlapping pairs update without a shove.
+ * Wrap ghosts set their own bits in `copyFixtures` and are left alone here.
+ */
+export function applyCollisionFilter(body: Body): void {
+  const data = getBodyData(body);
+  if (data?.kind === "ghost") return;
+  const wall = data?.kind === "wall";
+  const categoryBits = wall ? WALL_CATEGORY : SHAPE_CATEGORY;
+  const maskBits = !wall && data?.wallsOnly ? WALL_CATEGORY : 0xffff;
+  for (let f = body.getFixtureList(); f; f = f.getNext()) {
+    f.setFilterData({
+      groupIndex: f.getFilterGroupIndex(),
+      categoryBits,
+      maskBits,
+    });
+  }
 }
 
 /** Override a dynamic body's mass, scaling inertia so spin stays consistent with density. */
@@ -877,6 +909,7 @@ export function applyFixtureSpecs(body: Body, specs: FixtureJson[]): void {
       restitution: spec.restitution,
     });
   }
+  applyCollisionFilter(body);
 }
 
 /**
@@ -950,6 +983,7 @@ export function cloneBodyData(data: LegacyBodyUserData | undefined): BodyUserDat
   if (data.outline) copy.outline = data.outline.map((p) => ({ x: p.x, y: p.y }));
   if (data.holes) copy.holes = data.holes.map((ring) => ring.map((p) => ({ x: p.x, y: p.y })));
   if (data.restitutionOverride !== undefined) copy.restitutionOverride = data.restitutionOverride;
+  if (data.wallsOnly) copy.wallsOnly = true;
   const streams = cloneScheduledList(data.streams, data.stream);
   if (streams) copy.streams = streams;
   const winds = cloneScheduledList(data.winds, data.wind);

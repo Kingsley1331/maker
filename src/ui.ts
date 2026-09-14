@@ -76,6 +76,8 @@ export interface UiOptions {
   onJointDampingChange(ratio: number): void;
   /** Called when the Static / Dynamic / Kinematic control is used on the current selection. */
   onBodyTypeChange(type: BodyType): void;
+  /** Called when the Walls only checkbox is toggled on the current selection. */
+  onWallsOnlyChange(enabled: boolean): void;
   onMassChange(mass: number): void;
   onElasticityChange(value: number): void;
   onSelectionElasticityChange(value: number): void;
@@ -205,6 +207,7 @@ export function setupUi({
   onJointStiffnessChange,
   onJointDampingChange,
   onBodyTypeChange,
+  onWallsOnlyChange,
   onMassChange,
   onElasticityChange,
   onSelectionElasticityChange,
@@ -835,6 +838,7 @@ export function setupUi({
   const bodyTypeButtons = Array.from(
     document.querySelectorAll<HTMLButtonElement>("#body-type [data-body-type]"),
   );
+  const wallsOnly = requireElement<HTMLInputElement>("walls-only");
 
   function isBodyType(value: string | undefined): value is BodyType {
     return value === "static" || value === "dynamic" || value === "kinematic";
@@ -865,6 +869,10 @@ export function setupUi({
       button.blur();
     });
   }
+
+  wallsOnly.addEventListener("change", () => {
+    onWallsOnlyChange(wallsOnly.checked);
+  });
 
   selectionMass.addEventListener("input", () => {
     const mass = Number(selectionMass.value);
@@ -1263,6 +1271,10 @@ export function setupUi({
     const degrees = (((body.getAngle() * 180) / Math.PI) % 360 + 360) % 360;
     selectionAngle.textContent = `${Math.round(degrees)}\u00B0`;
     syncBodyTypeButtons(members);
+    setCheckedIfUnfocused(
+      wallsOnly,
+      members.every((member) => getBodyData(member)?.wallsOnly === true),
+    );
 
     selectionMass.disabled = !members.some((member) => member.getType() === "dynamic");
     setIfUnfocused(selectionMass, body.getMass().toFixed(2));

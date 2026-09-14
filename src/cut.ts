@@ -4,6 +4,7 @@ import { Polygon, type Body, type CircleShape, type PolygonShape, type World } f
 import { groupJoints } from "./group";
 import { buildJoint, isSceneJoint, jointBlueprint } from "./scene-edit";
 import {
+  applyCollisionFilter,
   boxBounds,
   cloneBodyData,
   FIXTURE,
@@ -658,6 +659,7 @@ function replaceFixtures(
       });
     }
   }
+  applyCollisionFilter(body);
 }
 
 /** Rebuild a filled body's fixtures from an outline and holes. Returns false if the contour is degenerate. */

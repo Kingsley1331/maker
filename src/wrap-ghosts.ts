@@ -1,6 +1,6 @@
 import type { Body, Contact, Fixture, MassData, Shape, World } from "planck";
 import { bodyBoundsPx } from "./physics";
-import { getBodyData, isPickable, type BodyUserData } from "./shapes";
+import { GHOST_CATEGORY, getBodyData, isPickable, SHAPE_CATEGORY, type BodyUserData } from "./shapes";
 import { toMeters, toPixels, type Point } from "./units";
 
 /**
@@ -17,10 +17,6 @@ import { toMeters, toPixels, type Point } from "./units";
  * counted exactly once. Ghost-ghost pairs are rejected by fixture filters. A shape longer than the
  * canvas meets its own ghost, so it collides with itself across the seam.
  */
-
-/** Ghost fixtures collide with real shapes (category 1) only. */
-const GHOST_CATEGORY = 0x0002;
-const GHOST_MASK = 0x0001;
 
 /** Neighbour tiles mirrored, as multiples of the canvas size. */
 const TILES: Point[] = [
@@ -105,7 +101,7 @@ export function createWrapGhosts(world: World): WrapGhosts {
         restitution: f.getRestitution(),
         isSensor: f.isSensor(),
         filterCategoryBits: GHOST_CATEGORY,
-        filterMaskBits: GHOST_MASK,
+        filterMaskBits: f.getFilterMaskBits() & SHAPE_CATEGORY,
       });
       shapes.push(f.getShape());
     }
@@ -168,6 +164,8 @@ export function createWrapGhosts(world: World): WrapGhosts {
     for (let f: Fixture | null = original.getFixtureList(); f && g; f = f.getNext(), g = g.getNext()) {
       if (g.getFriction() !== f.getFriction()) g.setFriction(f.getFriction());
       if (g.getRestitution() !== f.getRestitution()) g.setRestitution(f.getRestitution());
+      const wantMask = f.getFilterMaskBits() & SHAPE_CATEGORY;
+      if (g.getFilterMaskBits() !== wantMask) g.setFilterMaskBits(wantMask);
     }
   }
 
