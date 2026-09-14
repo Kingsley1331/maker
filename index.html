@@ -337,7 +337,11 @@
         </label>
         <label class="slider" id="motor-range-row" for="motor-range">
           <span class="label"><span id="motor-range-label">Range</span> <output id="motor-range-value">360°</output></span>
-          <input id="motor-range" type="range" min="0" max="360" step="5" value="360" />
+          <input id="motor-range" type="range" min="0" max="360" step="1" value="360" />
+        </label>
+        <label class="slider" id="motor-start-row" for="motor-start" hidden>
+          <span class="label">Start <output id="motor-start-value">0°</output></span>
+          <input id="motor-start" type="range" min="-180" max="180" step="1" value="0" />
         </label>
         <label class="slider" id="joint-stiffness-row" for="joint-stiffness" hidden>
           <span class="label">Stiffness <output id="joint-stiffness-value">Rigid</output></span>
@@ -696,8 +700,8 @@
           <li><strong>Throw:</strong> while playing, drag a shape and release to throw it.</li>
           <li>
             <strong>Edit while paused:</strong> press a shape to select it and drag to move it. Drag the
-            corner handles to resize, the edge handles to stretch, and the top knob to rotate (hold
-            Shift to snap to 15°).
+            corner handles to resize, the edge handles to stretch, the top knob to rotate (hold
+            Shift to snap to 15°), and the bottom knob to flip horizontally.
           </li>
           <li>
             <strong>Groups:</strong> shapes connected by joints select together. Click a shape in the
@@ -742,7 +746,8 @@
             <strong>Motors and limits:</strong> placing a joint selects it (or pause and click its
             drawing). Drag an end onto a new point on the same body to move it. Delete removes the
             joint. Set motor speed on pin, revolute, wheel, and slider; pin and revolute can limit how
-            far they turn, and sliders can limit travel and whether the two shapes collide. Rod and
+            far they turn (Range is travel from Start in the positive direction), and sliders can limit
+            travel and whether the two shapes collide. Rod and
             weld expose Stiffness and Damping.
           </li>
           <li>

@@ -1,8 +1,11 @@
 import type { Body, BodyType, Joint } from "planck";
 import {
+  ANGLE_START_MAX_DEG,
+  ANGLE_START_MIN_DEG,
   FULL_RANGE_DEG,
   FULL_TRAVEL_PX,
   getAngleRangeDeg,
+  getAngleStartDeg,
   getJointDamping,
   getJointFrequency,
   getMotorSpeed,
@@ -63,6 +66,8 @@ export interface UiOptions {
    * pin / revolute, pixels of travel for a slider.
    */
   onMotorRangeChange(value: number): void;
+  /** Called when the Start slider moves on a pin / revolute with a limited range. */
+  onMotorStartChange(startDeg: number): void;
   /** Called when the slider Collide checkbox is toggled. */
   onSliderCollideChange(collide: boolean): void;
   /** Called when the rod / weld stiffness slider moves (Hz; 0 is rigid). */
@@ -195,6 +200,7 @@ export function setupUi({
   onStep,
   onMotorSpeedChange,
   onMotorRangeChange,
+  onMotorStartChange,
   onSliderCollideChange,
   onJointStiffnessChange,
   onJointDampingChange,
@@ -1285,6 +1291,9 @@ export function setupUi({
   const motorRangeLabel = requireElement<HTMLElement>("motor-range-label");
   const motorRange = requireElement<HTMLInputElement>("motor-range");
   const motorRangeValue = requireElement<HTMLOutputElement>("motor-range-value");
+  const motorStartRow = requireElement<HTMLLabelElement>("motor-start-row");
+  const motorStart = requireElement<HTMLInputElement>("motor-start");
+  const motorStartValue = requireElement<HTMLOutputElement>("motor-start-value");
   const motorCollideRow = requireElement<HTMLLabelElement>("motor-collide-row");
   const motorCollide = requireElement<HTMLInputElement>("motor-collide");
   const jointStiffnessRow = requireElement<HTMLLabelElement>("joint-stiffness-row");
@@ -1296,6 +1305,8 @@ export function setupUi({
 
   /** What the Range slider currently edits: hinge angle (degrees) or slider travel (pixels). */
   let rangeUnit: "degrees" | "pixels" = "degrees";
+  /** Joint currently shown in the motor panel, for syncing Start when Range moves. */
+  let motorJoint: Joint | null = null;
 
   function showMotorSpeed(speed: number): void {
     motorSpeed.value = String(speed);
@@ -1307,8 +1318,25 @@ export function setupUi({
     if (rangeUnit === "pixels") {
       motorRangeValue.textContent = value >= FULL_TRAVEL_PX ? "Free" : `${Math.round(value)} px`;
     } else {
-      motorRangeValue.textContent = `${Math.round(value)}\u00B0`;
+      motorRangeValue.textContent =
+        value >= FULL_RANGE_DEG ? "Free" : `${Math.round(value)}\u00B0`;
     }
+  }
+
+  function showMotorStart(startDeg: number): void {
+    const clamped = Math.max(ANGLE_START_MIN_DEG, Math.min(ANGLE_START_MAX_DEG, startDeg));
+    motorStart.value = String(clamped);
+    motorStartValue.textContent = `${Math.round(clamped)}\u00B0`;
+  }
+
+  function syncMotorStartRow(): void {
+    const limited =
+      motorJoint !== null &&
+      hasAngleLimit(motorJoint) &&
+      rangeUnit === "degrees" &&
+      getAngleRangeDeg(motorJoint) < FULL_RANGE_DEG;
+    motorStartRow.hidden = !limited;
+    if (limited && motorJoint) showMotorStart(getAngleStartDeg(motorJoint));
   }
 
   function showJointStiffness(hz: number): void {
@@ -1336,19 +1364,26 @@ export function setupUi({
       motorRangeLabel.textContent = "Range";
       motorRange.min = "0";
       motorRange.max = String(FULL_RANGE_DEG);
-      motorRange.step = "5";
+      motorRange.step = "1";
+      motorStart.min = String(ANGLE_START_MIN_DEG);
+      motorStart.max = String(ANGLE_START_MAX_DEG);
+      motorStart.step = "1";
       showMotorRange(getAngleRangeDeg(joint));
     }
   }
 
   function showMotorInfo(joint: Joint | null): void {
+    motorJoint = joint;
     if (!joint) {
       motorInfo.hidden = true;
+      motorStartRow.hidden = true;
       return;
     }
     const data = joint.getUserData() as JointUserData | undefined;
     if (!data?.kind) {
       motorInfo.hidden = true;
+      motorStartRow.hidden = true;
+      motorJoint = null;
       return;
     }
     motorInfo.hidden = false;
@@ -1359,6 +1394,7 @@ export function setupUi({
     if (motor) showMotorSpeed(getMotorSpeed(joint));
     motorRangeRow.hidden = !hasAngleLimit(joint) && !hasTravelLimit(joint);
     if (!motorRangeRow.hidden) configureRangeRow(joint);
+    syncMotorStartRow();
     motorCollideRow.hidden = !hasTravelLimit(joint);
     motorCollide.checked = hasTravelLimit(joint) && joint.getCollideConnected();
     const spring = hasSpring(joint);
@@ -1380,6 +1416,13 @@ export function setupUi({
     const value = parseFloat(motorRange.value);
     showMotorRange(value);
     onMotorRangeChange(value);
+    syncMotorStartRow();
+  });
+
+  motorStart.addEventListener("input", () => {
+    const startDeg = parseFloat(motorStart.value);
+    showMotorStart(startDeg);
+    onMotorStartChange(startDeg);
   });
 
   motorCollide.addEventListener("change", () => {

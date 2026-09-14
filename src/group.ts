@@ -243,6 +243,35 @@ export function scaleGroup(bodies: Body[], c: Point, sx: number, sy = sx): void 
   finish(bodies);
 }
 
+function wrapAngleDeg(deg: number): number {
+  return ((deg % 360) + 360) % 360;
+}
+
+/** Horizontal mirror of world-space direction (0 = right, 90 = down). */
+function mirrorAngleDeg(deg: number): number {
+  return wrapAngleDeg(180 - deg);
+}
+
+function mirrorHorizontalMotion(body: Body): void {
+  const vel = body.getLinearVelocity();
+  body.setLinearVelocity({ x: -vel.x, y: vel.y });
+  body.setAngularVelocity(-body.getAngularVelocity());
+  const data = getBodyData(body);
+  if (!data) return;
+  if (data.streams) {
+    for (const stream of data.streams) stream.angleDeg = mirrorAngleDeg(stream.angleDeg);
+  }
+  if (data.winds) {
+    for (const wind of data.winds) wind.angleDeg = mirrorAngleDeg(wind.angleDeg);
+  }
+}
+
+/** Reflect every member horizontally about world point `c` (metres). */
+export function mirrorGroupHorizontal(bodies: Body[], c: Point): void {
+  scaleGroup(bodies, c, -1, 1);
+  for (const body of bodies) mirrorHorizontalMotion(body);
+}
+
 /** Total mass of the members. */
 export function groupMass(bodies: Body[]): number {
   let mass = 0;

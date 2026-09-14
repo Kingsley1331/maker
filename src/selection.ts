@@ -8,6 +8,7 @@ import {
 import {
   connectedBodies,
   groupBoundsPx,
+  mirrorGroupHorizontal,
   rotateGroup,
   scaleGroup,
   translateGroup,
@@ -55,13 +56,13 @@ const VERTEX_HIT_RADIUS = 7;
 type Handle =
   | { kind: "scale"; x: number; y: number; cursor: string }
   | { kind: "stretch"; axis: "x" | "y"; x: number; y: number; cursor: string }
-  | { kind: "rotate"; x: number; y: number; cursor: string };
+  | { kind: "rotate"; x: number; y: number; cursor: string }
+  | { kind: "mirror"; x: number; y: number; cursor: string };
 
 type Interaction = "none" | "scale" | "stretch" | "rotate" | "vertex";
 
 export interface SelectionOptions {
   canvas: HTMLCanvasElement;
-  getSize(): { w: number; h: number };
   getZoom(): number;
   getActiveTool(): ActiveTool;
   isSpray(): boolean;
@@ -109,7 +110,6 @@ export interface Selection {
 
 export function createSelection({
   canvas,
-  getSize,
   getZoom,
   getActiveTool,
   isSpray,
@@ -311,6 +311,12 @@ export function createSelection({
         y: r.y - ROTATE_OFFSET,
         cursor: "grab",
       },
+      {
+        kind: "mirror",
+        x: r.x + r.w / 2,
+        y: r.y + r.h + ROTATE_OFFSET,
+        cursor: "pointer",
+      },
     ];
   }
 
@@ -320,7 +326,7 @@ export function createSelection({
     for (const handle of handles()) {
       for (const o of offsets) {
         const q = { x: point.x - o.x, y: point.y - o.y };
-        if (handle.kind === "rotate") {
+        if (handle.kind === "rotate" || handle.kind === "mirror") {
           if (
             Math.hypot(q.x - handle.x, q.y - handle.y) <=
             ROTATE_HIT_RADIUS / getZoom()
@@ -375,11 +381,6 @@ export function createSelection({
     });
   }
 
-  function maxWidth(): number {
-    const { w, h } = getSize();
-    return Math.min(w, h) * 0.6;
-  }
-
   function pointerAngle(p: Point): number {
     return Math.atan2(p.y - pivot.y, p.x - pivot.x);
   }
@@ -418,15 +419,41 @@ export function createSelection({
 
       ctx.fillStyle = "#ffffff";
       for (const h of handles()) {
-        if (h.kind === "rotate") {
+        if (h.kind === "rotate" || h.kind === "mirror") {
           ctx.beginPath();
-          ctx.moveTo(h.x, r.y);
-          ctx.lineTo(h.x, h.y + ROTATE_KNOB_RADIUS);
+          if (h.kind === "mirror") {
+            ctx.moveTo(h.x, r.y + r.h);
+            ctx.lineTo(h.x, h.y - ROTATE_KNOB_RADIUS);
+          } else {
+            ctx.moveTo(h.x, r.y);
+            ctx.lineTo(h.x, h.y + ROTATE_KNOB_RADIUS);
+          }
           ctx.stroke();
           ctx.beginPath();
           ctx.arc(h.x, h.y, ROTATE_KNOB_RADIUS, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
+          if (h.kind === "mirror") {
+            const s = ROTATE_KNOB_RADIUS * 0.45;
+            ctx.beginPath();
+            ctx.moveTo(h.x, h.y - s);
+            ctx.lineTo(h.x, h.y + s);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(h.x - s * 0.3, h.y);
+            ctx.lineTo(h.x - s, h.y - s * 0.55);
+            ctx.lineTo(h.x - s, h.y + s * 0.55);
+            ctx.closePath();
+            ctx.fillStyle = ACCENT;
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(h.x + s * 0.3, h.y);
+            ctx.lineTo(h.x + s, h.y - s * 0.55);
+            ctx.lineTo(h.x + s, h.y + s * 0.55);
+            ctx.closePath();
+            ctx.fill();
+            ctx.fillStyle = "#ffffff";
+          }
         } else {
           ctx.fillRect(
             h.x - HANDLE_SIZE / 2,
@@ -481,10 +508,7 @@ export function createSelection({
 
     if (interaction === "scale") {
       const dist = Math.hypot(p.x - pivot.x, p.y - pivot.y);
-      const desiredWidth = Math.min(
-        Math.max(startWidth * (dist / startDist), MIN_WIDTH),
-        maxWidth(),
-      );
+      const desiredWidth = Math.max(startWidth * (dist / startDist), MIN_WIDTH);
       const total = desiredWidth / startWidth;
       const factor = total / applied;
 
@@ -498,10 +522,7 @@ export function createSelection({
     if (interaction === "stretch") {
       const dist =
         stretchAxis === "x" ? Math.abs(p.x - pivot.x) : Math.abs(p.y - pivot.y);
-      const desired = Math.min(
-        Math.max(startWidth * (dist / startDist), MIN_WIDTH),
-        maxWidth(),
-      );
+      const desired = Math.max(startWidth * (dist / startDist), MIN_WIDTH);
       const total = desired / startWidth;
       const factor = total / applied;
 
@@ -588,6 +609,12 @@ export function createSelection({
 
       event.stopImmediatePropagation();
       event.preventDefault();
+
+      if (handle.kind === "mirror") {
+        mirrorGroupHorizontal(members, vecToMeters(boxCentre()));
+        guides.clear();
+        return;
+      }
 
       pivot = boxCentre();
       const p = unwrapToward(raw, { x: handle.x, y: handle.y });

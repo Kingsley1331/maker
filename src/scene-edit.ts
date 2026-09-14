@@ -15,6 +15,7 @@ import {
   createWeld,
   createWheel,
   getAngleRangeDeg,
+  getAngleStartDeg,
   getJointDamping,
   getJointFrequency,
   getMotorSpeed,
@@ -22,7 +23,7 @@ import {
   hasAngleLimit,
   hasSpring,
   hasTravelLimit,
-  setAngleRange,
+  setAngleLimits,
   setJointDamping,
   setJointFrequency,
   setJointMotor,
@@ -81,6 +82,8 @@ export interface JointBlueprint {
   motorSpeed: number;
   /** Angle range in degrees, or null when the joint has no limit / limit is off. */
   angleRangeDeg: number | null;
+  /** Lower stop in degrees. Omitted on older saves; those restore a window centred on 0. */
+  angleStartDeg?: number;
   /** Rest length for rods (metres). */
   length?: number;
   /** Slider axis, unit vector in body A's local frame. */
@@ -120,6 +123,7 @@ export function jointBlueprint(joint: Joint): JointBlueprint | null {
     motorSpeed: getMotorSpeed(joint),
     angleRangeDeg: hasAngleLimit(joint) && joint.isLimitEnabled() ? getAngleRangeDeg(joint) : null,
   };
+  if (blueprint.angleRangeDeg !== null) blueprint.angleStartDeg = getAngleStartDeg(joint);
   if (data?.localA) blueprint.localA = { x: data.localA.x, y: data.localA.y };
   if (data?.localB) blueprint.localB = { x: data.localB.x, y: data.localB.y };
   if (joint.getType() === DistanceJoint.TYPE) {
@@ -202,7 +206,8 @@ export function buildJoint(
   if (!created) return null;
   if (bp.motorSpeed !== 0) setJointMotor(created, bp.motorSpeed);
   if (bp.angleRangeDeg !== null && hasAngleLimit(created)) {
-    setAngleRange(created, bp.angleRangeDeg);
+    const startDeg = bp.angleStartDeg ?? -bp.angleRangeDeg / 2;
+    setAngleLimits(created, startDeg, bp.angleRangeDeg);
   }
   if (bp.travelRangePx != null && hasTravelLimit(created)) {
     setTravelRange(created, bp.travelRangePx);

@@ -584,9 +584,17 @@ export function createPhysics(container: HTMLElement): Physics {
         const hub = ends.b;
         const arc = getAngleLimitArc(joint);
         if (arc) {
+          const arcR = 14;
+          const tick = 5;
           ctx.lineWidth = 1.5;
           ctx.beginPath();
-          ctx.arc(hub.x, hub.y, 14, arc.start, arc.end);
+          ctx.arc(hub.x, hub.y, arcR, arc.start, arc.end);
+          const sx = hub.x + Math.cos(arc.start) * arcR;
+          const sy = hub.y + Math.sin(arc.start) * arcR;
+          const nx = Math.cos(arc.start);
+          const ny = Math.sin(arc.start);
+          ctx.moveTo(sx - nx * tick, sy - ny * tick);
+          ctx.lineTo(sx + nx * tick, sy + ny * tick);
           ctx.stroke();
         }
         const travel = getTravelLimitSegment(joint);

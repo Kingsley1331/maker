@@ -773,6 +773,23 @@ export function scaleLocalAboutWorldAxes(
   return { x: c * tx + s * ty, y: -s * tx + c * ty };
 }
 
+function reverseRing(points: Point[]): Point[] {
+  const copy = points.slice();
+  copy.reverse();
+  return copy;
+}
+
+/** Reflection (`det < 0`) reverses winding; Planck polygons must stay CCW. */
+function withWinding(json: ShapeJson, reverse: boolean): ShapeJson {
+  if (!reverse) return json;
+  if (json.type === "polygon") return { type: "polygon", vertices: reverseRing(json.vertices) };
+  if (json.type === "chain") {
+    return { type: "chain", vertices: reverseRing(json.vertices), loop: json.loop };
+  }
+  if (json.type === "edge") return { type: "edge", v1: json.v2, v2: json.v1 };
+  return json;
+}
+
 /**
  * Read a body's fixtures as plain data. `map` transforms each local point; when
  * `circleRadiusScale` is null, circles become polygons (Planck has no ellipse).
@@ -781,6 +798,7 @@ function mapFixtureSpecs(
   body: Body,
   map: LocalMap,
   circleRadiusScale: number | null,
+  reverseWinding = false,
 ): FixtureJson[] {
   const specs: FixtureJson[] = [];
   for (let f = body.getFixtureList(); f; f = f.getNext()) {
@@ -818,6 +836,7 @@ function mapFixtureSpecs(
       json = { type: "chain", vertices: raw.map(map), loop: chain.m_isLoop };
     }
     if (!json) continue;
+    json = withWinding(json, reverseWinding);
     specs.push({
       shape: json,
       density: f.getDensity(),
@@ -861,9 +880,10 @@ export function applyFixtureSpecs(body: Body, specs: FixtureJson[]): void {
 }
 
 /**
- * Scale about the body origin. Uniform (`sy` omitted or equal to `sx`) keeps circles as circles.
- * Non-uniform is a world-axis stretch (`R^T * diag(sx, sy) * R`); circles become polygons.
- * Recreates fixtures; Planck has no Body.scale.
+ * Scale about the body origin. Isotropic (`|sx| === |sy|`) keeps circles as circles; otherwise
+ * a world-axis stretch (`R^T * diag(sx, sy) * R`) turns them into polygons. A negative determinant
+ * (reflection) reverses winding so Planck polygons stay CCW. Recreates fixtures; Planck has no
+ * Body.scale.
  */
 export function scaleBody(body: Body, sx: number, sy = sx): void {
   if (Math.abs(sx - 1) < 1e-4 && Math.abs(sy - 1) < 1e-4) return;
@@ -872,9 +892,15 @@ export function scaleBody(body: Body, sx: number, sy = sx): void {
   for (let f = body.getFixtureList(); f; f = f.getNext()) fixtures.push(f);
 
   const angle = body.getAngle();
-  const uniform = Math.abs(sx - sy) < 1e-4;
+  const isotropic = Math.abs(Math.abs(sx) - Math.abs(sy)) < 1e-4;
+  const reverseWinding = sx * sy < 0;
   const map = (v: { x: number; y: number }): Point => scaleLocalAboutWorldAxes(angle, v, sx, sy);
-  const rebuilt = mapFixtureSpecs(body, map, uniform ? sx : null);
+  const rebuilt = mapFixtureSpecs(
+    body,
+    map,
+    isotropic ? Math.abs(sx) : null,
+    reverseWinding,
+  );
 
   for (const f of fixtures) body.destroyFixture(f);
   applyFixtureSpecs(body, rebuilt);
@@ -882,9 +908,14 @@ export function scaleBody(body: Body, sx: number, sy = sx): void {
   const data = getBodyData(body);
   if (data?.outline) {
     data.outline = data.outline.map(map);
+    if (reverseWinding) data.outline.reverse();
   }
   if (data?.holes) {
-    data.holes = data.holes.map((ring) => ring.map(map));
+    data.holes = data.holes.map((ring) => {
+      const mapped = ring.map(map);
+      if (reverseWinding) mapped.reverse();
+      return mapped;
+    });
   }
   body.synchronizeFixtures();
   body.setAwake(true);

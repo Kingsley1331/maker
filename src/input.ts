@@ -129,7 +129,6 @@ export function setupInput({
   const guides = createAlignGuides({ getWrapOffsets, onAfterRender });
   const selection = createSelection({
     canvas,
-    getSize,
     getZoom,
     getActiveTool,
     isSpray,

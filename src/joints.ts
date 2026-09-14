@@ -311,6 +311,18 @@ export function setJointMotor(joint: Joint, speed: number): void {
 /** Full rotation; the slider value that means "no limit". */
 export const FULL_RANGE_DEG = 360;
 
+/** Start-angle slider bounds (degrees, relative to the pose when the joint was created). */
+export const ANGLE_START_MIN_DEG = -180;
+export const ANGLE_START_MAX_DEG = 180;
+
+function degToRad(deg: number): number {
+  return (deg * Math.PI) / 180;
+}
+
+function radToDeg(rad: number): number {
+  return (rad * 180) / Math.PI;
+}
+
 /** Only revolute-type joints (pin, revolute) can have their angular travel limited. */
 export function hasAngleLimit(joint: Joint): joint is RevoluteJoint {
   const data = joint.getUserData() as JointUserData | undefined;
@@ -322,23 +334,47 @@ export function hasAngleLimit(joint: Joint): joint is RevoluteJoint {
 export function getAngleRangeDeg(joint: Joint): number {
   if (!hasAngleLimit(joint) || !joint.isLimitEnabled()) return FULL_RANGE_DEG;
   const span = joint.getUpperLimit() - joint.getLowerLimit();
-  return Math.round((span * 180) / Math.PI);
+  return Math.round(radToDeg(span));
 }
 
 /**
- * Limit how far the joint can turn, centred on its current pose. 360 (or more) removes the
- * limit; 0 locks the joint at its current angle.
+ * Lower stop in degrees (joint angle 0 is the pose at creation). When the limit is off, this is
+ * the current pose so enabling a range can use it as the closed stop.
  */
-export function setAngleRange(joint: Joint, degrees: number): void {
+export function getAngleStartDeg(joint: Joint): number {
+  if (!hasAngleLimit(joint)) return 0;
+  if (joint.isLimitEnabled()) return Math.round(radToDeg(joint.getLowerLimit()));
+  return Math.round(radToDeg(joint.getJointAngle()));
+}
+
+/**
+ * Set the allowed sweep to `[startDeg, startDeg + rangeDeg]`. 360 (or more) removes the limit;
+ * 0 locks the joint at Start.
+ */
+export function setAngleLimits(joint: Joint, startDeg: number, rangeDeg: number): void {
   if (!hasAngleLimit(joint)) return;
-  if (degrees >= FULL_RANGE_DEG) {
+  if (rangeDeg >= FULL_RANGE_DEG) {
     joint.enableLimit(false);
     return;
   }
-  const half = ((Math.max(0, degrees) * Math.PI) / 180) / 2;
-  const angle = joint.getJointAngle();
-  joint.setLimits(angle - half, angle + half);
+  const start = degToRad(startDeg);
+  const span = degToRad(Math.max(0, rangeDeg));
+  joint.setLimits(start, start + span);
   joint.enableLimit(true);
+}
+
+/**
+ * Limit how far the joint can turn from Start. 360 (or more) removes the limit; 0 locks at
+ * Start. The first time a range is applied, Start is the current pose.
+ */
+export function setAngleRange(joint: Joint, degrees: number): void {
+  setAngleLimits(joint, getAngleStartDeg(joint), degrees);
+}
+
+/** Move the lower stop; the allowed span stays the same. No-op when the limit is off. */
+export function setAngleStart(joint: Joint, startDeg: number): void {
+  if (!hasAngleLimit(joint) || !joint.isLimitEnabled()) return;
+  setAngleLimits(joint, startDeg, getAngleRangeDeg(joint));
 }
 
 /**
