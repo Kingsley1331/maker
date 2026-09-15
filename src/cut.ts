@@ -783,8 +783,11 @@ function meshContours(tris: Point[][]): Contour {
   }
   loops.sort((x, y) => Math.abs(signedArea(y)) - Math.abs(signedArea(x)));
   return {
-    outline: ensureWinding(loops[0], true),
-    holes: loops.slice(1).map((ring) => ensureWinding(ring, false)),
+    outline: simplifyRing(ensureWinding(loops[0], true)),
+    holes: loops
+      .slice(1)
+      .map((ring) => simplifyRing(ensureWinding(ring, false)))
+      .filter((ring) => ring.length >= 3),
   };
 }
 
@@ -826,7 +829,8 @@ function fanTriangles(verts: Point[]): Point[][] {
 function rebuildBodyFromTris(body: Body, tris: Point[][]): boolean {
   const material = fixtureMaterial(body);
   const contour = meshContours(tris);
-  replaceFixtures(body, tris, material);
+  const pieces = earcutContour(contour);
+  replaceFixtures(body, pieces.length > 0 ? pieces : tris, material);
   const data = getBodyData(body);
   if (data) {
     data.outline = contour.outline;
@@ -862,6 +866,7 @@ function splitBody(world: World, body: Body, components: Point[][][]): Body[] {
     const centroid = meshCentroid(tris);
     const shifted = tris.map((tri) => tri.map((p) => ({ x: p.x - centroid.x, y: p.y - centroid.y })));
     const contour = meshContours(shifted);
+    const piecesMesh = earcutContour(contour);
     const userData = cloneBodyData(srcData);
     userData.outline = contour.outline;
     userData.holes = contour.holes;
@@ -874,7 +879,7 @@ function splitBody(world: World, body: Body, components: Point[][][]): Body[] {
       angularDamping: angDamp,
       userData,
     });
-    replaceFixtures(created, shifted, material);
+    replaceFixtures(created, piecesMesh.length > 0 ? piecesMesh : shifted, material);
     created.setLinearVelocity(vel);
     created.setAngularVelocity(spin);
     created.synchronizeFixtures();
