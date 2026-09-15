@@ -20,10 +20,14 @@ import {
   type AfterRender,
 } from "./physics";
 import {
+  holeBoundsPx,
   listVertices,
   moveVertex,
   refsEqual,
+  rotateHole,
+  scaleHole,
   startVertexDrag,
+  translateHole,
   verticesOfDrag,
   type VertexDrag,
   type VertexHandle,
@@ -64,7 +68,7 @@ type Control =
   | { kind: "vertex"; vertex: VertexHandle }
   | { kind: "handle"; handle: Handle };
 
-type Interaction = "none" | "scale" | "stretch" | "rotate" | "vertex";
+type Interaction = "none" | "scale" | "stretch" | "rotate" | "vertex" | "move";
 
 export interface SelectionOptions {
   canvas: HTMLCanvasElement;
@@ -106,10 +110,17 @@ export interface Selection {
   selectMembers(bodies: readonly Body[]): void;
   /** Select a scene joint. Ignored unless paused. Clears any selected body. */
   selectJoint(joint: Joint): void;
+  /**
+   * Select one hole on a filled body. Ignored unless paused. The parent body stays in `members`
+   * so the property readout still works; gizmos wrap the hole instead of the body.
+   */
+  selectHole(body: Body, holeIndex: number): void;
   deselect(): void;
   /** Move everything selected by `dPx` pixels. */
   translate(dPx: Point): void;
-  /** True while a handle drag (scale, stretch, rotate, or vertex) is in progress. */
+  /** Index of the selected hole, or null when the selection is a body / group. */
+  readonly selectedHoleIndex: number | null;
+  /** True while a handle drag (scale, stretch, rotate, vertex, or hole move) is in progress. */
   readonly isInteracting: boolean;
 }
 
@@ -137,6 +148,8 @@ export function createSelection({
   /** Last marquee / free set, used to widen after narrowing to one member. */
   let setMembers: Body[] = [];
   let selectedJoint: Joint | null = null;
+  /** When set, gizmos wrap this hole on `selected` instead of the body AABB. */
+  let selectedHoleIndex: number | null = null;
 
   // Handle drag state
   let interaction: Interaction = "none";
@@ -160,6 +173,14 @@ export function createSelection({
     if (!isPaused()) return;
     const jointChanged = selectedJoint !== null;
     selectedJoint = null;
+
+    if (selectedHoleIndex !== null && body === selected && mode === "body") {
+      selectedHoleIndex = null;
+      onSelectionUpdate(selected, members);
+      if (jointChanged) onJointSelectionUpdate(null);
+      return;
+    }
+    selectedHoleIndex = null;
 
     if (mode === "set" && members.includes(body)) {
       selected = body;
@@ -229,6 +250,7 @@ export function createSelection({
 
     const jointChanged = selectedJoint !== null;
     selectedJoint = null;
+    selectedHoleIndex = null;
     selected = unique[0];
     members = unique;
     if (unique.length === 1) {
@@ -252,10 +274,28 @@ export function createSelection({
     interaction = "none";
     vertexDrag = null;
     hoveredVertex = null;
+    selectedHoleIndex = null;
     canvas.style.cursor = "";
     selectedJoint = joint;
     if (bodyChanged) onSelectionUpdate(null, []);
     onJointSelectionUpdate(joint);
+  }
+
+  function selectHole(body: Body, holeIndex: number): void {
+    if (!isPaused() || !isPickable(body)) return;
+    if (holeBoundsPx(body, holeIndex) === null) return;
+    const jointChanged = selectedJoint !== null;
+    selectedJoint = null;
+    selected = body;
+    members = [body];
+    mode = "body";
+    setMembers = [];
+    selectedHoleIndex = holeIndex;
+    interaction = "none";
+    vertexDrag = null;
+    hoveredVertex = null;
+    onSelectionUpdate(selected, members);
+    if (jointChanged) onJointSelectionUpdate(null);
   }
 
   function deselect(): void {
@@ -265,6 +305,7 @@ export function createSelection({
     setMembers = [];
     mode = "body";
     selectedJoint = null;
+    selectedHoleIndex = null;
     interaction = "none";
     vertexDrag = null;
     hoveredVertex = null;
@@ -294,9 +335,21 @@ export function createSelection({
     };
   }
 
-  /** Box around everything selected. */
+  /** Box around the selected hole, or around every selected body. */
   function boxRect(): { x: number; y: number; w: number; h: number } {
+    if (selectedHoleIndex !== null && members.length === 1) {
+      const bounds = holeBoundsPx(members[0], selectedHoleIndex);
+      if (bounds) return rectOf(bounds);
+    }
     return rectOf(groupBoundsPx(members));
+  }
+
+  function selectedBounds(): { min: Point; max: Point } {
+    if (selectedHoleIndex !== null && members.length === 1) {
+      const bounds = holeBoundsPx(members[0], selectedHoleIndex);
+      if (bounds) return bounds;
+    }
+    return groupBoundsPx(members);
   }
 
   function boxCentre(): Point {
@@ -307,7 +360,7 @@ export function createSelection({
   function handles(): Handle[] {
     const r = boxRect();
     const rotateOffset = screenPx(ROTATE_OFFSET);
-    return [
+    const out: Handle[] = [
       { kind: "scale", x: r.x, y: r.y, cursor: "nwse-resize" },
       { kind: "stretch", axis: "y", x: r.x + r.w / 2, y: r.y, cursor: "ns-resize" },
       { kind: "scale", x: r.x + r.w, y: r.y, cursor: "nesw-resize" },
@@ -322,13 +375,16 @@ export function createSelection({
         y: r.y - rotateOffset,
         cursor: "grab",
       },
-      {
+    ];
+    if (selectedHoleIndex === null) {
+      out.push({
         kind: "mirror",
         x: r.x + r.w / 2,
         y: r.y + r.h + rotateOffset,
         cursor: "pointer",
-      },
-    ];
+      });
+    }
+    return out;
   }
 
   function hitHandle(point: Point): Handle | null {
@@ -357,7 +413,11 @@ export function createSelection({
 
   function vertexHandles(): VertexHandle[] {
     if (members.length !== 1 || !isPaused()) return [];
-    return listVertices(members[0]);
+    const verts = listVertices(members[0]);
+    if (selectedHoleIndex === null) return verts;
+    return verts.filter(
+      (vertex) => vertex.ref.kind === "hole" && vertex.ref.holeIndex === selectedHoleIndex,
+    );
   }
 
   function hitVertex(point: Point): VertexHandle | null {
@@ -414,7 +474,31 @@ export function createSelection({
       return;
     }
     hoveredVertex = null;
-    canvas.style.cursor = hit ? hit.handle.cursor : "";
+    if (hit) {
+      canvas.style.cursor = hit.handle.cursor;
+      return;
+    }
+    if (selectedHoleIndex !== null && hitHoleBox(point)) {
+      canvas.style.cursor = "grab";
+      return;
+    }
+    canvas.style.cursor = "";
+  }
+
+  function hitHoleBox(point: Point): boolean {
+    if (selectedHoleIndex === null || members.length === 0 || !isPaused()) return false;
+    const r = boxRect();
+    const offsets = getWrapOffsets();
+    for (const o of offsets) {
+      const q = { x: point.x - o.x, y: point.y - o.y };
+      if (q.x >= r.x && q.x <= r.x + r.w && q.y >= r.y && q.y <= r.y + r.h) return true;
+    }
+    return false;
+  }
+
+  function holePivotLocal(): Point {
+    const lp = members[0].getLocalPoint(vecToMeters(pivot));
+    return { x: lp.x, y: lp.y };
   }
 
   function unwrapToward(point: Point, around: Point): Point {
@@ -435,6 +519,10 @@ export function createSelection({
 
   function translate(dPx: Point): void {
     if (members.length === 0) return;
+    if (selectedHoleIndex !== null) {
+      translateHole(members[0], selectedHoleIndex, vecToMeters(dPx));
+      return;
+    }
     translateGroup(members, vecToMeters(dPx));
   }
 
@@ -556,8 +644,22 @@ export function createSelection({
       return;
     }
 
+    if (interaction === "move") {
+      const raw = canvasPoint(event);
+      const p = unwrapToward(raw, pivot);
+      const d = { x: p.x - pivot.x, y: p.y - pivot.y };
+      if (d.x !== 0 || d.y !== 0) {
+        translate(d);
+        pivot = p;
+      }
+      canvas.style.cursor = "grabbing";
+      return;
+    }
+
     const p = unwrapToward(canvasPoint(event), pivot);
     const pivotM = vecToMeters(pivot);
+    const holeIndex = selectedHoleIndex;
+    const editingHole = holeIndex !== null;
 
     if (interaction === "scale") {
       const dist = Math.hypot(p.x - pivot.x, p.y - pivot.y);
@@ -566,8 +668,12 @@ export function createSelection({
       const factor = total / applied;
 
       if (Math.abs(factor - 1) > 1e-4) {
-        scaleGroup(members, pivotM, factor);
-        applied = total;
+        if (editingHole) {
+          if (scaleHole(members[0], holeIndex, holePivotLocal(), factor)) applied = total;
+        } else {
+          scaleGroup(members, pivotM, factor);
+          applied = total;
+        }
       }
       return;
     }
@@ -580,9 +686,17 @@ export function createSelection({
       const factor = total / applied;
 
       if (Math.abs(factor - 1) > 1e-4) {
-        if (stretchAxis === "x") scaleGroup(members, pivotM, factor, 1);
-        else scaleGroup(members, pivotM, 1, factor);
-        applied = total;
+        if (editingHole) {
+          const sx = stretchAxis === "x" ? factor : 1;
+          const sy = stretchAxis === "y" ? factor : 1;
+          if (scaleHole(members[0], holeIndex, holePivotLocal(), sx, sy)) applied = total;
+        } else if (stretchAxis === "x") {
+          scaleGroup(members, pivotM, factor, 1);
+          applied = total;
+        } else {
+          scaleGroup(members, pivotM, 1, factor);
+          applied = total;
+        }
       }
       return;
     }
@@ -599,6 +713,14 @@ export function createSelection({
       ? Math.round(accumulated / ROTATE_SNAP) * ROTATE_SNAP
       : accumulated;
     const extra = target - snappedApplied;
+
+    if (editingHole) {
+      if (extra !== 0 && rotateHole(members[0], holeIndex, holePivotLocal(), extra)) {
+        snappedApplied += extra;
+      }
+      return;
+    }
+
     const aligned = matchRotate(
       members,
       pivot,
@@ -656,7 +778,19 @@ export function createSelection({
       }
 
       const handle = hit?.kind === "handle" ? hit.handle : hitHandle(raw);
-      if (!handle) return;
+      if (!handle) {
+        if (selectedHoleIndex !== null && hitHoleBox(raw)) {
+          event.stopImmediatePropagation();
+          event.preventDefault();
+          pivot = raw;
+          interaction = "move";
+          canvas.style.cursor = "grabbing";
+          guides.clear();
+          window.addEventListener("mousemove", onMove);
+          window.addEventListener("mouseup", onUp);
+        }
+        return;
+      }
 
       event.stopImmediatePropagation();
       event.preventDefault();
@@ -671,14 +805,14 @@ export function createSelection({
       const p = unwrapToward(raw, { x: handle.x, y: handle.y });
       if (handle.kind === "scale") {
         startDist = Math.max(Math.hypot(p.x - pivot.x, p.y - pivot.y), 1);
-        const bounds = groupBoundsPx(members);
+        const bounds = selectedBounds();
         startWidth = Math.max(bounds.max.x - bounds.min.x, 1);
         applied = 1;
         interaction = "scale";
         guides.clear();
       } else if (handle.kind === "stretch") {
         stretchAxis = handle.axis;
-        const bounds = groupBoundsPx(members);
+        const bounds = selectedBounds();
         if (stretchAxis === "x") {
           startDist = Math.max(Math.abs(p.x - pivot.x), 1);
           startWidth = Math.max(bounds.max.x - bounds.min.x, 1);
@@ -738,12 +872,16 @@ export function createSelection({
     get selectedJoint() {
       return selectedJoint;
     },
+    get selectedHoleIndex() {
+      return selectedHoleIndex;
+    },
     get isInteracting() {
       return interaction !== "none";
     },
     select,
     selectMembers,
     selectJoint,
+    selectHole,
     deselect,
     translate,
   };

@@ -9,7 +9,7 @@ import {
   snapDrawPoint,
   snapRadialSize,
 } from "./align-guides";
-import { boxCutter, primitiveCutter, trySubtractHole } from "./cut";
+import { boxCutter, primitiveCutter, trySubtractHole, type PunchedHole } from "./cut";
 import { connectedBodies, groupBoundsPx, translateGroup } from "./group";
 import {
   createPin,
@@ -25,6 +25,7 @@ import {
   type JointType,
 } from "./joints";
 import { bodyBoundsPx, nearestWrapPoint, withWrapOffsets, type AfterRender } from "./physics";
+import { holeAt } from "./reshape";
 import { createSelection, type Selection } from "./selection";
 import {
   boxBounds,
@@ -73,6 +74,8 @@ export interface InputOptions {
   getActiveTool(): ActiveTool;
   isSpray(): boolean;
   isCut(): boolean;
+  /** Turn Cut off after a hole is punched so the hole can be edited right away. */
+  setCut(on: boolean): void;
   isChainOutline(): boolean;
   getSpraySample(): SpraySample;
   getSpraySize(): number;
@@ -114,6 +117,7 @@ export function setupInput({
   getActiveTool,
   isSpray,
   isCut,
+  setCut,
   isChainOutline,
   getSpraySample,
   getSpraySize,
@@ -170,6 +174,8 @@ export function setupInput({
   let clickOnlyDeselects = false;
   /** Paused move gesture: body centre (px) relative to the pointer at press time. */
   let moveOffset: Point | null = null;
+  /** Paused hole-move gesture: last pointer position (px) the hole was moved to. */
+  let moveAnchor: Point | null = null;
   /** Pressed a body already in the selection; toggle group/solo on click-up, not press. */
   let pendingSelectToggle = false;
   /** Vertices of an in-progress polygon or chain. */
@@ -205,6 +211,31 @@ export function setupInput({
 
   function alignmentOn(): boolean {
     return !isCut() && !isSpray() && !isZoomTool();
+  }
+
+  /**
+   * After a cut: if it punched a hole (rather than biting an edge or splitting), turn Cut off and
+   * select the newest hole so it can be moved, rotated, and resized right away.
+   */
+  function finishCut(punched: PunchedHole[]): void {
+    if (punched.length === 0 || !isPaused()) return;
+    const last = punched[punched.length - 1];
+    setCut(false);
+    selection.selectHole(last.body, last.holeIndex);
+    applyCursor();
+  }
+
+  /** The cutout hole under `p` (any wrap copy), preferring the newest hole on each body. */
+  function holeUnderPointer(p: Point): PunchedHole | null {
+    const offsets = getWrapOffsets();
+    for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
+      if (!isPickable(body)) continue;
+      for (const o of offsets) {
+        const holeIndex = holeAt(body, { x: p.x - o.x, y: p.y - o.y });
+        if (holeIndex !== null) return { body, holeIndex };
+      }
+    }
+    return null;
   }
 
   function snapDraftPoint(p: Point): Point {
@@ -345,7 +376,7 @@ export function setupInput({
   }
 
   function applyCursor(): void {
-    if (panning || moveOffset || anchorDrag) canvas.style.cursor = "grabbing";
+    if (panning || moveOffset || moveAnchor || anchorDrag) canvas.style.cursor = "grabbing";
     else if (isZoomTool()) canvas.style.cursor = "grab";
     else if (hoveredHub) canvas.style.cursor = "pointer";
     else if (
@@ -484,6 +515,7 @@ export function setupInput({
     ghostColor = undefined;
     clickOnlyDeselects = false;
     moveOffset = null;
+    moveAnchor = null;
     pendingSelectToggle = false;
     sprayLast = null;
     spawnSnap = null;
@@ -668,6 +700,21 @@ export function setupInput({
 
     pressedBody = bodyAt(p);
 
+    // Paused: a press inside a cutout hole selects that hole (holes have no fixtures, so
+    // `bodyAt` misses them) and drags it. The selection module already owns presses inside
+    // the currently selected hole's box, so this only fires for a not-yet-selected hole.
+    const holeHit = isPaused() && !isCut() ? holeUnderPointer(p) : null;
+    if (holeHit) {
+      pressedBody = holeHit.body;
+      selection.selectHole(holeHit.body, holeHit.holeIndex);
+      moveAnchor = p;
+      setGrabEnabled(false);
+      applyCursor();
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+      return;
+    }
+
     if (isCut()) {
       selection.deselect();
       if (!isDraftTool()) spawnStart = p;
@@ -686,11 +733,12 @@ export function setupInput({
     } else if (isPaused()) {
       // Paused: select a new body on press so a drag can move it. If this body is already in the
       // selection (a group member, or the solo shape), keep that selection for dragging and
-      // toggle group/solo only on a click-up.
-      if (selection.members.includes(pressedBody)) {
-        pendingSelectToggle = true;
-      } else {
+      // toggle group/solo only on a click-up. Pressing the solid while one of its holes is
+      // selected switches straight back to the body so the drag moves the shape, not the hole.
+      if (selection.selectedHoleIndex !== null || !selection.members.includes(pressedBody)) {
         selection.select(pressedBody);
+      } else {
+        pendingSelectToggle = true;
       }
       const posPx = vecToPixels(pressedBody.getPosition());
       const local = nearestWrapPoint(p, posPx, getWrapOffsets());
@@ -724,7 +772,7 @@ export function setupInput({
 
     if (isPolygonTool()) {
       if (draft.length < 3) return;
-      if (isCut()) trySubtractHole(world, draft);
+      if (isCut()) finishCut(trySubtractHole(world, draft));
       else if (isChainOutline()) createChain(world, draft, true);
       else createPolygon(world, draft);
     } else if (isChainTool()) {
@@ -759,6 +807,18 @@ export function setupInput({
     if (marqueeStart) {
       const dist = Math.hypot(p.x - marqueeStart.x, p.y - marqueeStart.y);
       if (dist > clickSlop()) dragged = true;
+      return;
+    }
+
+    if (moveAnchor && selection.selectedHoleIndex !== null) {
+      // Hole move: the hole follows the pointer inside its solid; no alignment snapping.
+      const local = nearestWrapPoint(p, moveAnchor, getWrapOffsets());
+      const delta = { x: local.x - moveAnchor.x, y: local.y - moveAnchor.y };
+      if (delta.x !== 0 || delta.y !== 0) {
+        dragged = true;
+        selection.translate(delta);
+        moveAnchor = local;
+      }
       return;
     }
 
@@ -966,9 +1026,14 @@ export function setupInput({
       if (isCut()) {
         if (dragged) {
           if (isBoxTool()) {
-            trySubtractHole(world, boxCutter(spawnStart, p));
+            finishCut(trySubtractHole(world, boxCutter(spawnStart, p)));
           } else if (ghost && ghost.type !== "box" && ghost.type !== "frame" && ghost.type !== "edge") {
-            trySubtractHole(world, primitiveCutter(ghost.type, ghost.x, ghost.y, ghost.size, sectorFromPreview(ghost)));
+            finishCut(
+              trySubtractHole(
+                world,
+                primitiveCutter(ghost.type, ghost.x, ghost.y, ghost.size, sectorFromPreview(ghost)),
+              ),
+            );
           }
         }
       } else if (isBoxTool()) {

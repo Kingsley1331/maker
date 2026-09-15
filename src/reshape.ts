@@ -1,9 +1,10 @@
 import type { Body } from "planck";
-import { applyContour } from "./cut";
+import { applyContour, cutterFitsInSolid, pointInRing } from "./cut";
 import {
   applyFixtureSpecs,
   fixtureSpecs,
   getBodyData,
+  scaleLocalAboutWorldAxes,
   type FixtureJson,
 } from "./shapes";
 import { toMeters, vecToMeters, vecToPixels, type Point } from "./units";
@@ -288,4 +289,101 @@ export function moveVertex(drag: VertexDrag, worldPx: Point): boolean {
   if (!replaceSpecs(body, specs)) return false;
   drag.specs = specs;
   return true;
+}
+
+function applyHoleMap(body: Body, holeIndex: number, map: (p: Point) => Point): boolean {
+  const geo = filledGeometry(body);
+  if (!geo || holeIndex < 0 || holeIndex >= geo.holes.length) return false;
+  const next = geo.holes[holeIndex].map(map);
+  if (next.length < 3) return false;
+  const others = geo.holes.filter((_, i) => i !== holeIndex);
+  if (!cutterFitsInSolid({ outline: geo.outline, holes: others }, next)) return false;
+  const holes = geo.holes.map((ring, i) => (i === holeIndex ? next : ring));
+  try {
+    return applyContour(body, geo.outline, holes);
+  } catch {
+    return false;
+  }
+}
+
+/** Index of the hole ring that contains `worldPx`, or null. Prefers the last (newest) hole. */
+export function holeAt(body: Body, worldPx: Point): number | null {
+  const geo = filledGeometry(body);
+  if (!geo || geo.holes.length === 0) return null;
+  const local = body.getLocalPoint(vecToMeters(worldPx));
+  const p = { x: local.x, y: local.y };
+  for (let h = geo.holes.length - 1; h >= 0; h--) {
+    if (pointInRing(p, geo.holes[h])) return h;
+  }
+  return null;
+}
+
+/** World-pixel AABB of one hole ring, or null if that hole is missing. */
+export function holeBoundsPx(body: Body, holeIndex: number): { min: Point; max: Point } | null {
+  const geo = filledGeometry(body);
+  if (!geo || holeIndex < 0 || holeIndex >= geo.holes.length) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of geo.holes[holeIndex]) {
+    const w = worldPxOf(body, p);
+    minX = Math.min(minX, w.x);
+    minY = Math.min(minY, w.y);
+    maxX = Math.max(maxX, w.x);
+    maxY = Math.max(maxY, w.y);
+  }
+  if (!Number.isFinite(minX)) return null;
+  return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
+}
+
+/** Move one hole by a world-space delta (metres). False leaves the last valid pose in place. */
+export function translateHole(body: Body, holeIndex: number, dMeters: Point): boolean {
+  if (dMeters.x === 0 && dMeters.y === 0) return true;
+  const d = body.getLocalVector(dMeters);
+  return applyHoleMap(body, holeIndex, (p) => ({ x: p.x + d.x, y: p.y + d.y }));
+}
+
+/** Rotate one hole about a body-local pivot. False leaves the last valid pose in place. */
+export function rotateHole(
+  body: Body,
+  holeIndex: number,
+  pivotLocal: Point,
+  dAngle: number,
+): boolean {
+  if (Math.abs(dAngle) < 1e-12) return true;
+  const cos = Math.cos(dAngle);
+  const sin = Math.sin(dAngle);
+  return applyHoleMap(body, holeIndex, (p) => {
+    const dx = p.x - pivotLocal.x;
+    const dy = p.y - pivotLocal.y;
+    return {
+      x: pivotLocal.x + dx * cos - dy * sin,
+      y: pivotLocal.y + dx * sin + dy * cos,
+    };
+  });
+}
+
+/**
+ * Scale one hole about a body-local pivot with world-axis `sx, sy`. False leaves the last valid
+ * pose in place.
+ */
+export function scaleHole(
+  body: Body,
+  holeIndex: number,
+  pivotLocal: Point,
+  sx: number,
+  sy = sx,
+): boolean {
+  if (Math.abs(sx - 1) < 1e-4 && Math.abs(sy - 1) < 1e-4) return true;
+  const angle = body.getAngle();
+  return applyHoleMap(body, holeIndex, (p) => {
+    const mapped = scaleLocalAboutWorldAxes(
+      angle,
+      { x: p.x - pivotLocal.x, y: p.y - pivotLocal.y },
+      sx,
+      sy,
+    );
+    return { x: pivotLocal.x + mapped.x, y: pivotLocal.y + mapped.y };
+  });
 }

@@ -150,6 +150,8 @@ export interface Ui {
   isSpray(): boolean;
   /** True when Cut is on and a filled spawn shape is the active tool. */
   isCut(): boolean;
+  /** Turn Cut on or off. Turning it on clears Spray and Chain. */
+  setCut(on: boolean): void;
   /** True when Chain outline is on and a filled spawn shape is the active tool. */
   isChainOutline(): boolean;
   /** One stamp's properties (defaults, or a random roll inside each Rand range). */
@@ -401,6 +403,20 @@ export function setupUi({
 
   function isCut(): boolean {
     return cut && cutAllowed(activeTool);
+  }
+
+  function setCut(on: boolean): void {
+    if (on) {
+      if (!cutAllowed(activeTool)) return;
+      cut = true;
+      spray = false;
+      chain = false;
+    } else {
+      cut = false;
+    }
+    syncSpray();
+    syncCut();
+    syncChain();
   }
 
   function isChainOutline(): boolean {
@@ -1568,6 +1584,7 @@ export function setupUi({
     getActiveTool: () => activeTool,
     isSpray,
     isCut,
+    setCut,
     isChainOutline,
     getSpraySample,
     getSpraySize,

@@ -180,6 +180,7 @@ const input = setupInput({
   getActiveTool: () => ui.getActiveTool(),
   isSpray: () => ui.isSpray(),
   isCut: () => ui.isCut(),
+  setCut: (on) => ui.setCut(on),
   isChainOutline: () => ui.isChainOutline(),
   getSpraySample: () => ui.getSpraySample(),
   getSpraySize: () => ui.getSpraySize(),

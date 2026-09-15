@@ -80,13 +80,20 @@ function cutterLocal(body: Body, cutterWorldM: Point[]): Point[] | null {
   });
 }
 
+/** A hole punched by a fully-inside cutter, ready to select for move / rotate / scale. */
+export interface PunchedHole {
+  body: Body;
+  holeIndex: number;
+}
+
 /**
  * Subtract `cutterWorldPx` from every overlapping pickable body. A cutter fully inside punches a
  * hole; a cutter that crosses the outline bites or splits the solid into separate bodies.
  * Targets are snapshotted first so splits and deletes cannot skip or recut neighbors.
+ * Returns the holes that were punched (not edge bites or splits).
  */
-export function trySubtractHole(world: World, cutterWorldPx: Point[]): boolean {
-  if (cutterWorldPx.length < 3) return false;
+export function trySubtractHole(world: World, cutterWorldPx: Point[]): PunchedHole[] {
+  if (cutterWorldPx.length < 3) return [];
   const cutterWorldM = cutterWorldPx.map(vecToMeters);
 
   const targets: { body: Body; local: Point[] }[] = [];
@@ -99,18 +106,21 @@ export function trySubtractHole(world: World, cutterWorldPx: Point[]): boolean {
     targets.push({ body, local });
   }
 
-  let any = false;
+  const punched: PunchedHole[] = [];
   for (const { body, local } of targets) {
-    if (cutBody(world, body, local)) any = true;
+    const holeIndex = cutBody(world, body, local);
+    if (holeIndex !== null) punched.push({ body, holeIndex });
   }
-  return any;
+  return punched;
 }
 
-function cutBody(world: World, body: Body, local: Point[]): boolean {
+/** Punch a hole and return its index, or `null` for an edge bite / split / miss. */
+function cutBody(world: World, body: Body, local: Point[]): number | null {
   const contour = bodyContour(body);
-  if (!contour || !cutterOverlapsSolid(contour, local)) return false;
+  if (!contour || !cutterOverlapsSolid(contour, local)) return null;
   if (cutterFitsInSolid(contour, local)) return subtractHole(body, local);
-  return subtractOverlap(world, body, local);
+  subtractOverlap(world, body, local);
+  return null;
 }
 
 export function bodyContour(body: Body): Contour | null {
@@ -191,11 +201,13 @@ export function cutterOverlapsSolid(contour: Contour, cutter: Point[]): boolean 
   return false;
 }
 
-function subtractHole(body: Body, cutterLocal: Point[]): boolean {
+function subtractHole(body: Body, cutterLocal: Point[]): number | null {
   const contour = bodyContour(body);
-  if (!contour) return false;
+  if (!contour) return null;
+  const holeIndex = contour.holes.length;
   const holes = [...contour.holes.map(copyRing), copyRing(cutterLocal)];
-  return applyContour(body, copyRing(contour.outline), holes);
+  if (!applyContour(body, copyRing(contour.outline), holes)) return null;
+  return holeIndex;
 }
 
 function subtractOverlap(world: World, body: Body, cutterLocal: Point[]): boolean {
@@ -736,7 +748,7 @@ function pointInSolid(p: Point, outline: Point[], holes: Point[][]): boolean {
   return true;
 }
 
-function pointInRing(p: Point, ring: Point[]): boolean {
+export function pointInRing(p: Point, ring: Point[]): boolean {
   let inside = false;
   for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
     const a = ring[i];
