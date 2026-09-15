@@ -1,6 +1,7 @@
 import { createPhysics } from "./physics";
 import { setupInput } from "./input";
 import { setAngleStart, setJointDamping, setJointFrequency, setJointMotor, setJointRange } from "./joints";
+import { mergeTargets, tryMergeSelection } from "./merge";
 import { deleteSelection, duplicateSelection, setPrismaticCollide } from "./scene-edit";
 import {
   clearScene,
@@ -165,6 +166,17 @@ const ui = setupUi({
     const { primary } = duplicateSelection(physics.world, physics.ground, members, selected);
     if (primary) input.selection.select(primary);
   },
+  onMergeSelection: () => {
+    if (!physics.isPaused()) return;
+    const { members, selected } = input.selection;
+    if (!selected || members.length === 0) return;
+    const absorbed = tryMergeSelection(physics.world, selected, members);
+    if (!absorbed) return;
+    const gone = new Set(absorbed);
+    const remaining = members.filter((body) => !gone.has(body));
+    if (!remaining.includes(selected)) remaining.unshift(selected);
+    input.selection.selectMembers(remaining);
+  },
 });
 
 const input = setupInput({
@@ -187,7 +199,11 @@ const input = setupInput({
   getWallThickness: () => ui.getWallThickness(),
   getSectorDeg: () => ui.getSectorDeg(),
   getInnerRadius: () => ui.getInnerRadius(),
-  onSelectionUpdate: (body, members) => ui.showSelectionInfo(body, members),
+  onSelectionUpdate: (body, members) => {
+    const mergeEnabled =
+      body !== null && mergeTargets(physics.world, body, members).length > 0;
+    ui.showSelectionInfo(body, members, mergeEnabled);
+  },
   onJointSelectionUpdate: (joint) => {
     physics.setSelectedJoint(joint);
     ui.showMotorInfo(joint);

@@ -114,6 +114,8 @@ export interface UiOptions {
   onDeleteSelection(): void;
   /** Duplicate the current body/group (paused only). */
   onDuplicateSelection(): void;
+  /** Union overlapping/touching filled shapes into the selected body (paused only). */
+  onMergeSelection(): void;
 }
 
 export interface SpraySample {
@@ -166,9 +168,10 @@ export interface Ui {
   getInnerRadius(): number;
   /**
    * Show (or hide, when null) the readout for the current selection. `members` is every selected
-   * shape; more than one means a jointed group.
+   * shape; more than one means a jointed group. `mergeEnabled` lights up Merge when another filled
+   * shape overlaps or touches the selection.
    */
-  showSelectionInfo(body: Body | null, members?: readonly Body[]): void;
+  showSelectionInfo(body: Body | null, members?: readonly Body[], mergeEnabled?: boolean): void;
   /** Show (or hide, when null) the motor slider for the currently selected joint. */
   showMotorInfo(joint: Joint | null): void;
   /** Switch the active shape / joint / zoom tool (or none). */
@@ -234,6 +237,7 @@ export function setupUi({
   onToolChange,
   onDeleteSelection,
   onDuplicateSelection,
+  onMergeSelection,
 }: UiOptions): Ui {
   let selectedShape: ShapeType = "circle";
   let activeTool: ActiveTool = { kind: "shape", shape: selectedShape };
@@ -1361,8 +1365,14 @@ export function setupUi({
     onWindChange,
   );
 
+  const selectionMerge = requireElement<HTMLButtonElement>("selection-merge");
   const selectionDuplicate = requireElement<HTMLButtonElement>("selection-duplicate");
   const selectionDelete = requireElement<HTMLButtonElement>("selection-delete");
+  bindActivate(selectionMerge, () => {
+    if (selectionMerge.disabled) return;
+    onMergeSelection();
+    selectionMerge.blur();
+  });
   bindActivate(selectionDuplicate, () => {
     onDuplicateSelection();
     selectionDuplicate.blur();
@@ -1378,9 +1388,14 @@ export function setupUi({
     motorDelete.blur();
   });
 
-  function showSelectionInfo(body: Body | null, members: readonly Body[] = body ? [body] : []): void {
+  function showSelectionInfo(
+    body: Body | null,
+    members: readonly Body[] = body ? [body] : [],
+    mergeEnabled = false,
+  ): void {
     if (!body || members.length === 0) {
       selectionInfo.hidden = true;
+      selectionMerge.disabled = true;
       return;
     }
     const isGroup = members.length > 1;
@@ -1392,6 +1407,10 @@ export function setupUi({
     selectionSize.textContent = `${Math.round(width)} x ${Math.round(height)} px`;
     const degrees = (((body.getAngle() * 180) / Math.PI) % 360 + 360) % 360;
     selectionAngle.textContent = `${Math.round(degrees)}\u00B0`;
+    selectionMerge.disabled = !mergeEnabled;
+    selectionMerge.title = mergeEnabled
+      ? "Merge overlapping shapes"
+      : "Overlap or touch another filled shape";
     syncBodyTypeButtons(members);
     setCheckedIfUnfocused(
       wallsOnly,

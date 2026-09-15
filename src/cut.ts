@@ -201,6 +201,123 @@ export function cutterOverlapsSolid(contour: Contour, cutter: Point[]): boolean 
   return false;
 }
 
+/** Map `source`'s local contour into `target`'s local frame. */
+export function contourInBody(target: Body, source: Body, contour: Contour): Contour {
+  const map = (p: Point): Point => {
+    const world = source.getWorldPoint(p);
+    const local = target.getLocalPoint(world);
+    return { x: local.x, y: local.y };
+  };
+  return {
+    outline: contour.outline.map(map),
+    holes: contour.holes.map((ring) => ring.map(map)),
+  };
+}
+
+/**
+ * True when two solids overlap or touch, including shared edges. Holes are empty space, so a
+ * shape sitting in another body's hole does not count.
+ */
+export function solidsOverlap(a: Contour, b: Contour): boolean {
+  if (a.outline.length < 3 || b.outline.length < 3) return false;
+  for (const p of a.outline) {
+    if (pointInSolid(p, b.outline, b.holes)) return true;
+  }
+  for (const p of b.outline) {
+    if (pointInSolid(p, a.outline, a.holes)) return true;
+  }
+  for (const hole of a.holes) {
+    for (const p of hole) {
+      if (pointInSolid(p, b.outline, b.holes)) return true;
+    }
+    if (ringsIntersect(hole, b.outline)) return true;
+  }
+  for (const hole of b.holes) {
+    for (const p of hole) {
+      if (pointInSolid(p, a.outline, a.holes)) return true;
+    }
+    if (ringsIntersect(hole, a.outline)) return true;
+  }
+  return ringsIntersect(a.outline, b.outline);
+}
+
+/**
+ * Boolean union of two contours in the same local frame. Null when the result is not a single
+ * connected solid (a vertex-only kiss, or a degenerate clip).
+ */
+export function unionContours(a: Contour, b: Contour): Contour | null {
+  const ta = earcutContour(a);
+  const tb = earcutContour(b);
+  if (ta.length === 0 || tb.length === 0) return null;
+  const extra = subtractSolid(tb, ta);
+  const combined = conformMesh([...ta, ...extra].map((tri) => tri.map(snapPoint)));
+  if (combined.length === 0) return null;
+  const components = connectedComponents(combined);
+  if (components.length !== 1) return null;
+  const raw = meshContours(components[0]);
+  const outline = simplifyRing(raw.outline);
+  if (outline.length < 3) return null;
+  return {
+    outline,
+    holes: raw.holes.map(simplifyRing).filter((ring) => ring.length >= 3),
+  };
+}
+
+/** Perpendicular distance (metres) under which a vertex counts as lying on the line through its neighbours. */
+const COLLINEAR_DIST = 1e-5;
+
+/**
+ * Drop near-duplicate points and vertices that sit on the straight line between their neighbours.
+ * The triangle union leaves such points wherever an internal slice met the outline.
+ */
+function simplifyRing(ring: Point[]): Point[] {
+  let pts = copyRing(ring);
+  if (pts.length < 3) return pts;
+
+  // Consecutive near-duplicates.
+  const deduped: Point[] = [];
+  for (const p of pts) {
+    const last = deduped[deduped.length - 1];
+    if (last && Math.hypot(p.x - last.x, p.y - last.y) <= MERGE_SNAP) continue;
+    deduped.push(p);
+  }
+  while (deduped.length > 1) {
+    const first = deduped[0];
+    const last = deduped[deduped.length - 1];
+    if (Math.hypot(first.x - last.x, first.y - last.y) > MERGE_SNAP) break;
+    deduped.pop();
+  }
+  pts = deduped;
+
+  let changed = true;
+  while (changed && pts.length > 3) {
+    changed = false;
+    for (let i = 0; i < pts.length && pts.length > 3; i++) {
+      const prev = pts[(i + pts.length - 1) % pts.length];
+      const cur = pts[i];
+      const next = pts[(i + 1) % pts.length];
+      if (isBetweenOnLine(prev, cur, next)) {
+        pts.splice(i, 1);
+        changed = true;
+        i -= 1;
+      }
+    }
+  }
+  return pts.length >= 3 ? pts : copyRing(ring);
+}
+
+/** True when `p` lies on segment `a`-`b` (within tolerance), not just on the infinite line. */
+function isBetweenOnLine(a: Point, p: Point, b: Point): boolean {
+  const abx = b.x - a.x;
+  const aby = b.y - a.y;
+  const len = Math.hypot(abx, aby);
+  if (len <= MERGE_SNAP) return true;
+  const dist = Math.abs(orient(a, b, p)) / len;
+  if (dist > COLLINEAR_DIST) return false;
+  const t = ((p.x - a.x) * abx + (p.y - a.y) * aby) / (len * len);
+  return t >= -1e-9 && t <= 1 + 1e-9;
+}
+
 function subtractHole(body: Body, cutterLocal: Point[]): number | null {
   const contour = bodyContour(body);
   if (!contour) return null;
@@ -336,6 +453,96 @@ function subtractConvexFromPoly(poly: Point[], cutter: Point[]): Point[][] {
     if (frag.length < 3 || Math.abs(signedArea(frag)) <= AREA_EPS) return false;
     return !pointInRing(ringCentroid(frag), cutter);
   });
+}
+
+/** Keep the parts of `tris` that lie outside the solid of `cutters` (each cutter triangle is convex). */
+function subtractSolid(tris: Point[][], cutters: Point[][]): Point[][] {
+  let out = tris;
+  for (const cutter of cutters) {
+    if (cutter.length < 3) continue;
+    const next: Point[][] = [];
+    for (const tri of out) next.push(...subtractConvexFromPoly(tri, cutter));
+    out = next;
+  }
+  return out.filter((tri) => Math.abs(signedArea(tri)) > AREA_EPS);
+}
+
+const MERGE_SNAP = 1e-6;
+/**
+ * Perpendicular distance (metres) under which a snapped vertex still counts as lying on an edge.
+ * Snapping moves a point by up to MERGE_SNAP * sqrt(2) / 2, so this must sit above that.
+ */
+const ON_EDGE_DIST = 4 * MERGE_SNAP;
+
+function snapPoint(p: Point): Point {
+  return {
+    x: Math.round(p.x / MERGE_SNAP) * MERGE_SNAP,
+    y: Math.round(p.y / MERGE_SNAP) * MERGE_SNAP,
+  };
+}
+
+/**
+ * Insert shared vertices that lie on another triangle's edges so adjacent union pieces share
+ * exact endpoints (needed for connectivity and outline extraction).
+ */
+function conformMesh(tris: Point[][]): Point[][] {
+  const points: Point[] = [];
+  const seen = new Set<string>();
+  for (const tri of tris) {
+    for (const p of tri) {
+      const key = vertexKey(p);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      points.push(p);
+    }
+  }
+  const out: Point[][] = [];
+  for (const tri of tris) {
+    if (tri.length < 3) continue;
+    const ring = insertEdgeVertices(tri, points);
+    const pieces = ring.length === 3 ? fanTriangles(ring) : earcutContour({ outline: ring, holes: [] });
+    for (const piece of pieces) {
+      if (Math.abs(signedArea(piece)) > AREA_EPS) out.push(piece);
+    }
+  }
+  return out;
+}
+
+function insertEdgeVertices(tri: Point[], points: Point[]): Point[] {
+  const ring: Point[] = [];
+  for (let i = 0; i < tri.length; i++) {
+    const a = tri[i];
+    const b = tri[(i + 1) % tri.length];
+    ring.push(a);
+    const extras: { t: number; p: Point }[] = [];
+    const abx = b.x - a.x;
+    const aby = b.y - a.y;
+    const ab2 = abx * abx + aby * aby;
+    if (ab2 < LINE_EPS * LINE_EPS) continue;
+    for (const p of points) {
+      if (nearPoint(p, a) || nearPoint(p, b)) continue;
+      if (!vertexOnEdge(a, p, b)) continue;
+      extras.push({ t: ((p.x - a.x) * abx + (p.y - a.y) * aby) / ab2, p });
+    }
+    extras.sort((u, v) => u.t - v.t);
+    for (const extra of extras) ring.push(extra.p);
+  }
+  return ring;
+}
+
+function nearPoint(a: Point, b: Point): boolean {
+  return Math.hypot(a.x - b.x, a.y - b.y) <= ON_EDGE_DIST;
+}
+
+function vertexOnEdge(a: Point, p: Point, b: Point): boolean {
+  const abx = b.x - a.x;
+  const aby = b.y - a.y;
+  const len = Math.hypot(abx, aby);
+  if (len <= MERGE_SNAP) return false;
+  if (Math.abs(orient(a, b, p)) / len > ON_EDGE_DIST) return false;
+  const t = ((p.x - a.x) * abx + (p.y - a.y) * aby) / (len * len);
+  const slack = ON_EDGE_DIST / len;
+  return t >= -slack && t <= 1 + slack;
 }
 
 function splitPolyByLine(poly: Point[], a: Point, b: Point): Point[][] {

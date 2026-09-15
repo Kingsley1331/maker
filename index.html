@@ -625,6 +625,14 @@
           <input id="walls-only" type="checkbox" />
         </label>
         <div class="selection-actions">
+          <button
+            id="selection-merge"
+            type="button"
+            title="Overlap or touch another filled shape"
+            disabled
+          >
+            Merge
+          </button>
           <button id="selection-duplicate" type="button" title="Duplicate (Ctrl+D)">Duplicate</button>
           <button id="selection-delete" type="button" title="Delete">Delete</button>
         </div>
@@ -756,9 +764,10 @@
             group (move, resize, rotate, duplicate, or delete together). Click empty space to clear.
           </li>
           <li>
-            <strong>Copy / delete (paused):</strong> with a shape or group selected, use Duplicate or
-            Delete in the Selected panel, or press Ctrl+D / Delete. With a motor joint selected, Delete
-            removes that joint.
+            <strong>Copy / delete / merge (paused):</strong> with a shape or group selected, use
+            Duplicate or Delete in the Selected panel, or press Ctrl+D / Delete. Move filled shapes
+            so they overlap or touch, then Merge to join them into one shape. Edges and chains
+            cannot merge. With a motor joint selected, Delete removes that joint.
           </li>
           <li>
             <strong>Joints (paused):</strong> pick a joint tool. Joint buttons are disabled while the

@@ -23,6 +23,8 @@ import {
   withWrapOffsets,
   type AfterRender,
 } from "./physics";
+import { bodyContour } from "./cut";
+import { mergeTargets } from "./merge";
 import {
   holeBoundsPx,
   holeRingPx,
@@ -40,7 +42,7 @@ import {
 } from "./reshape";
 import { isPickable } from "./shapes";
 import type { ActiveTool } from "./ui";
-import { vecToMeters, type Point } from "./units";
+import { toPixels, vecToMeters, type Point } from "./units";
 
 /** Screen pixels; divided by zoom so overlay chrome stays a constant size. */
 const BOX_PADDING = 10;
@@ -608,6 +610,24 @@ export function createSelection({
     return Math.atan2(p.y - pivot.y, p.x - pivot.x);
   }
 
+  function strokeBodyContour(ctx: CanvasRenderingContext2D, body: Body): void {
+    const contour = bodyContour(body);
+    if (!contour) return;
+    ctx.beginPath();
+    const rings = [contour.outline, ...contour.holes];
+    for (const ring of rings) {
+      if (ring.length < 3) continue;
+      const first = body.getWorldPoint(ring[0]);
+      ctx.moveTo(toPixels(first.x), toPixels(first.y));
+      for (let i = 1; i < ring.length; i++) {
+        const p = body.getWorldPoint(ring[i]);
+        ctx.lineTo(toPixels(p.x), toPixels(p.y));
+      }
+      ctx.closePath();
+    }
+    ctx.stroke();
+  }
+
   function translate(dPx: Point): boolean {
     if (members.length === 0) return false;
     if (selectedHoleIndex !== null) return tryTranslateHole(selectedHoleIndex, dPx);
@@ -619,6 +639,7 @@ export function createSelection({
 
   onAfterRender((ctx) => {
     if (!selected || members.length === 0 || isCut()) return;
+    const primary = selected;
     const r = boxRect();
     const zoom = getZoom();
     const handleSize = screenPx(HANDLE_SIZE);
@@ -642,6 +663,16 @@ export function createSelection({
           const m = rectOf(bodyBoundsPx(body));
           ctx.strokeRect(m.x + inset, m.y + inset, m.w - inset * 2, m.h - inset * 2);
         }
+        ctx.restore();
+      }
+
+      const partners = mergeTargets(world, primary, members);
+      if (partners.length > 0) {
+        ctx.save();
+        ctx.setLineDash([]);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = ACCENT;
+        for (const body of partners) strokeBodyContour(ctx, body);
         ctx.restore();
       }
       ctx.setLineDash([]);

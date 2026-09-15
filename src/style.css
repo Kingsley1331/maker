@@ -400,6 +400,10 @@ body {
   gap: 4px;
 }
 
+#selection-merge {
+  grid-column: 1 / -1;
+}
+
 .selection-actions button {
   padding: 6px 8px;
   font: inherit;
@@ -411,8 +415,13 @@ body {
   cursor: pointer;
 }
 
-.selection-actions button:hover {
+.selection-actions button:hover:not(:disabled) {
   background: #343a45;
+}
+
+.selection-actions button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 #motor-info .selection-actions {
