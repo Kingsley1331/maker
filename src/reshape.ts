@@ -337,6 +337,13 @@ export function holeBoundsPx(body: Body, holeIndex: number): { min: Point; max: 
   return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
 }
 
+/** World-pixel vertices of one hole ring, or null if that hole is missing. */
+export function holeRingPx(body: Body, holeIndex: number): Point[] | null {
+  const geo = filledGeometry(body);
+  if (!geo || holeIndex < 0 || holeIndex >= geo.holes.length) return null;
+  return geo.holes[holeIndex].map((p) => worldPxOf(body, p));
+}
+
 /** Move one hole by a world-space delta (metres). False leaves the last valid pose in place. */
 export function translateHole(body: Body, holeIndex: number, dMeters: Point): boolean {
   if (dMeters.x === 0 && dMeters.y === 0) return true;

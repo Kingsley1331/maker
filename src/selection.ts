@@ -1,8 +1,12 @@
 import type { Body, Joint, World } from "planck";
 import {
   alignThreshold,
+  collectHoleAlignTargets,
   collectTargetBounds,
+  matchBounds,
   matchRotate,
+  matchRotateHole,
+  snapScaleBounds,
   type AlignGuides,
 } from "./align-guides";
 import {
@@ -21,6 +25,7 @@ import {
 } from "./physics";
 import {
   holeBoundsPx,
+  holeRingPx,
   listVertices,
   moveVertex,
   refsEqual,
@@ -116,8 +121,8 @@ export interface Selection {
    */
   selectHole(body: Body, holeIndex: number): void;
   deselect(): void;
-  /** Move everything selected by `dPx` pixels. */
-  translate(dPx: Point): void;
+  /** Move everything selected by `dPx` pixels. False if a hole move was rejected. */
+  translate(dPx: Point): boolean;
   /** Index of the selected hole, or null when the selection is a body / group. */
   readonly selectedHoleIndex: number | null;
   /** True while a handle drag (scale, stretch, rotate, vertex, or hole move) is in progress. */
@@ -501,6 +506,92 @@ export function createSelection({
     return { x: lp.x, y: lp.y };
   }
 
+  function alignmentOn(): boolean {
+    return !isCut() && !isSpray() && getActiveTool().kind !== "zoom";
+  }
+
+  function holeTargets(around: Point) {
+    if (selectedHoleIndex === null || members.length !== 1) return [];
+    return collectHoleAlignTargets(world, members[0], selectedHoleIndex, around, getWrapOffsets());
+  }
+
+  function tryTranslateHole(holeIndex: number, dPx: Point): boolean {
+    if (dPx.x === 0 && dPx.y === 0) return true;
+    if (alignmentOn()) {
+      const current = holeBoundsPx(members[0], holeIndex);
+      if (current) {
+        const tentative = {
+          min: { x: current.min.x + dPx.x, y: current.min.y + dPx.y },
+          max: { x: current.max.x + dPx.x, y: current.max.y + dPx.y },
+        };
+        const center = {
+          x: (tentative.min.x + tentative.max.x) / 2,
+          y: (tentative.min.y + tentative.max.y) / 2,
+        };
+        const result = matchBounds(tentative, holeTargets(center), alignThreshold(getZoom()));
+        const snapped = { x: dPx.x + result.dx, y: dPx.y + result.dy };
+        if (translateHole(members[0], holeIndex, vecToMeters(snapped))) {
+          guides.set(result.lines);
+          return true;
+        }
+      }
+    }
+    const ok = translateHole(members[0], holeIndex, vecToMeters(dPx));
+    if (ok) guides.clear();
+    return ok;
+  }
+
+  function applyHoleScale(holeIndex: number, sx: number, sy: number): void {
+    const axisOf = (ax: number, ay: number) => (Math.abs(ax - 1) >= Math.abs(ay - 1) ? ax : ay);
+
+    if (alignmentOn()) {
+      const snapped = snapScaleBounds(
+        pivot,
+        selectedBounds(),
+        sx,
+        sy,
+        holeTargets(pivot),
+        alignThreshold(getZoom()),
+        MIN_WIDTH,
+      );
+      if (scaleHole(members[0], holeIndex, holePivotLocal(), snapped.sx, snapped.sy)) {
+        applied *= axisOf(snapped.sx, snapped.sy);
+        guides.set(snapped.lines);
+        return;
+      }
+    }
+    if (scaleHole(members[0], holeIndex, holePivotLocal(), sx, sy)) {
+      applied *= axisOf(sx, sy);
+      guides.clear();
+    }
+  }
+
+  function applyHoleRotate(holeIndex: number, extra: number, snapAxis: boolean): void {
+    if (alignmentOn()) {
+      const ring = holeRingPx(members[0], holeIndex);
+      if (ring && ring.length >= 3) {
+        const aligned = matchRotateHole(
+          ring,
+          pivot,
+          extra,
+          holeTargets(pivot),
+          alignThreshold(getZoom()),
+          snapAxis,
+        );
+        const step = extra + aligned.dAngle;
+        if (step === 0 || rotateHole(members[0], holeIndex, holePivotLocal(), step)) {
+          if (step !== 0) snappedApplied += step;
+          guides.set(aligned.lines);
+          return;
+        }
+      }
+    }
+    if (extra !== 0 && rotateHole(members[0], holeIndex, holePivotLocal(), extra)) {
+      snappedApplied += extra;
+    }
+    guides.clear();
+  }
+
   function unwrapToward(point: Point, around: Point): Point {
     return nearestWrapPoint(point, around, getWrapOffsets());
   }
@@ -517,13 +608,11 @@ export function createSelection({
     return Math.atan2(p.y - pivot.y, p.x - pivot.x);
   }
 
-  function translate(dPx: Point): void {
-    if (members.length === 0) return;
-    if (selectedHoleIndex !== null) {
-      translateHole(members[0], selectedHoleIndex, vecToMeters(dPx));
-      return;
-    }
+  function translate(dPx: Point): boolean {
+    if (members.length === 0) return false;
+    if (selectedHoleIndex !== null) return tryTranslateHole(selectedHoleIndex, dPx);
     translateGroup(members, vecToMeters(dPx));
+    return true;
   }
 
   // --- Rendering -------------------------------------------------------------------------------
@@ -648,10 +737,7 @@ export function createSelection({
       const raw = canvasPoint(event);
       const p = unwrapToward(raw, pivot);
       const d = { x: p.x - pivot.x, y: p.y - pivot.y };
-      if (d.x !== 0 || d.y !== 0) {
-        translate(d);
-        pivot = p;
-      }
+      if ((d.x !== 0 || d.y !== 0) && translate(d)) pivot = p;
       canvas.style.cursor = "grabbing";
       return;
     }
@@ -669,7 +755,7 @@ export function createSelection({
 
       if (Math.abs(factor - 1) > 1e-4) {
         if (editingHole) {
-          if (scaleHole(members[0], holeIndex, holePivotLocal(), factor)) applied = total;
+          applyHoleScale(holeIndex, factor, factor);
         } else {
           scaleGroup(members, pivotM, factor);
           applied = total;
@@ -687,9 +773,11 @@ export function createSelection({
 
       if (Math.abs(factor - 1) > 1e-4) {
         if (editingHole) {
-          const sx = stretchAxis === "x" ? factor : 1;
-          const sy = stretchAxis === "y" ? factor : 1;
-          if (scaleHole(members[0], holeIndex, holePivotLocal(), sx, sy)) applied = total;
+          applyHoleScale(
+            holeIndex,
+            stretchAxis === "x" ? factor : 1,
+            stretchAxis === "y" ? factor : 1,
+          );
         } else if (stretchAxis === "x") {
           scaleGroup(members, pivotM, factor, 1);
           applied = total;
@@ -715,9 +803,7 @@ export function createSelection({
     const extra = target - snappedApplied;
 
     if (editingHole) {
-      if (extra !== 0 && rotateHole(members[0], holeIndex, holePivotLocal(), extra)) {
-        snappedApplied += extra;
-      }
+      applyHoleRotate(holeIndex, extra, !event.shiftKey);
       return;
     }
 

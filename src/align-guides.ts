@@ -1,5 +1,6 @@
 import type { Body, ChainShape, CircleShape, EdgeShape, PolygonShape, World } from "planck";
 import { bodyBoundsPx, nearestWrapPoint, withWrapOffsets, type AfterRender } from "./physics";
+import { holeBoundsPx } from "./reshape";
 import {
   circularSectorContour,
   DEFAULT_INNER_RADIUS,
@@ -99,6 +100,28 @@ export function collectTargetBounds(
   for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
     if (!isPickable(body) || ignored.has(body)) continue;
     out.push(wrapBoundsToward(bodyBoundsPx(body), around, offsets));
+  }
+  return out;
+}
+
+/**
+ * Snap targets for a hole being edited: every pickable body (including the parent) plus the
+ * other holes on that body. The hole itself is omitted.
+ */
+export function collectHoleAlignTargets(
+  world: World,
+  body: Body,
+  holeIndex: number,
+  around: Point,
+  offsets: Point[],
+): AlignBounds[] {
+  const out = collectTargetBounds(world, [], around, offsets);
+  const data = getBodyData(body);
+  const holes = data?.holes ?? [];
+  for (let i = 0; i < holes.length; i++) {
+    if (i === holeIndex) continue;
+    const bounds = holeBoundsPx(body, i);
+    if (bounds) out.push(wrapBoundsToward(bounds, around, offsets));
   }
   return out;
 }
@@ -277,28 +300,149 @@ export function matchRotate(
   threshold: number,
   snapAxis: boolean,
 ): { dAngle: number; lines: GuideLine[] } {
-  const dAngle = snapAxis ? rotationSnapDelta(bodies, pivot, extraAngle, threshold) : 0;
-  const total = extraAngle + dAngle;
-  const lines: GuideLine[] = [];
-  for (const body of bodies) {
-    for (const edge of bodyEdgesPx(body)) {
-      const a = rotatePx(edge.a, pivot, total);
-      const b = rotatePx(edge.b, pivot, total);
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      if (Math.abs(dy) <= MATCH_EPS && Math.abs(dx) > MATCH_EPS) {
-        const ext = extendEdge(a, b, LINE_PAD);
-        lines.push(paddedLine("h", (ext.a.y + ext.b.y) / 2, ext.a.x, ext.b.x));
+  const edges: { a: Point; b: Point }[] = [];
+  for (const body of bodies) edges.push(...bodyEdgesPx(body));
+  return matchRotateEdges(
+    edges,
+    (angle) => rotatedGroupBounds(bodies, pivot, angle),
+    pivot,
+    extraAngle,
+    targets,
+    threshold,
+    snapAxis,
+  );
+}
+
+/** Same as `matchRotate`, but for a hole ring in world pixels. */
+export function matchRotateHole(
+  ringPx: Point[],
+  pivot: Point,
+  extraAngle: number,
+  targets: AlignBounds[],
+  threshold: number,
+  snapAxis: boolean,
+): { dAngle: number; lines: GuideLine[] } {
+  return matchRotateEdges(
+    ringEdges(ringPx, true),
+    (angle) => rotatedRingBounds(ringPx, pivot, angle),
+    pivot,
+    extraAngle,
+    targets,
+    threshold,
+    snapAxis,
+  );
+}
+
+/**
+ * Snap a scale/stretch about `pivot` so the AABB sides or centre line up with `targets`.
+ * `sx`/`sy` are the incremental factors being applied to `bounds`.
+ */
+export function snapScaleBounds(
+  pivot: Point,
+  bounds: AlignBounds,
+  sx: number,
+  sy: number,
+  targets: AlignBounds[],
+  threshold: number,
+  minSize: number,
+): { sx: number; sy: number; lines: GuideLine[] } {
+  const uniform = Math.abs(sx - sy) < 1e-6;
+  let bestSx = sx;
+  let bestSy = sy;
+  let bestAbs = threshold + 1;
+
+  const consider = (slot: number, origin: number, target: number, axis: "x" | "y"): void => {
+    const span = slot - origin;
+    if (Math.abs(span) < 1e-6) return;
+    const next = (target - origin) / span;
+    const trySx = axis === "x" || uniform ? next : 1;
+    const trySy = axis === "y" || uniform ? next : 1;
+    const tentative = scaledBounds(pivot, bounds, trySx, trySy);
+    const w = Math.abs(tentative.max.x - tentative.min.x);
+    const h = Math.abs(tentative.max.y - tentative.min.y);
+    if (w < minSize || h < minSize) return;
+    const current = origin + span * (axis === "x" ? sx : sy);
+    const dist = Math.abs(current - target);
+    if (dist <= threshold && dist < bestAbs) {
+      bestAbs = dist;
+      if (uniform) {
+        bestSx = next;
+        bestSy = next;
+      } else if (axis === "x") {
+        bestSx = next;
+      } else {
+        bestSy = next;
       }
-      if (Math.abs(dx) <= MATCH_EPS && Math.abs(dy) > MATCH_EPS) {
-        const ext = extendEdge(a, b, LINE_PAD);
-        lines.push(paddedLine("v", (ext.a.x + ext.b.x) / 2, ext.a.y, ext.b.y));
+    }
+  };
+
+  const snapX = uniform || Math.abs(sx - 1) > 1e-6;
+  const snapY = uniform || Math.abs(sy - 1) > 1e-6;
+  for (const t of targets) {
+    if (snapX) {
+      for (const s of vSlots(t)) {
+        consider(bounds.min.x, pivot.x, s, "x");
+        consider(bounds.max.x, pivot.x, s, "x");
+        consider((bounds.min.x + bounds.max.x) / 2, pivot.x, s, "x");
+      }
+    }
+    if (snapY) {
+      for (const s of hSlots(t)) {
+        consider(bounds.min.y, pivot.y, s, "y");
+        consider(bounds.max.y, pivot.y, s, "y");
+        consider((bounds.min.y + bounds.max.y) / 2, pivot.y, s, "y");
       }
     }
   }
-  const aabb = rotatedGroupBounds(bodies, pivot, total);
-  lines.push(...slotLines(aabb, targets, threshold));
+
+  return {
+    sx: bestSx,
+    sy: bestSy,
+    lines: slotLines(scaledBounds(pivot, bounds, bestSx, bestSy), targets, MATCH_EPS),
+  };
+}
+
+function matchRotateEdges(
+  edges: { a: Point; b: Point }[],
+  boundsAfter: (angle: number) => AlignBounds,
+  pivot: Point,
+  extraAngle: number,
+  targets: AlignBounds[],
+  threshold: number,
+  snapAxis: boolean,
+): { dAngle: number; lines: GuideLine[] } {
+  const dAngle = snapAxis ? rotationSnapDeltaFromEdges(edges, pivot, extraAngle, threshold) : 0;
+  const total = extraAngle + dAngle;
+  const lines: GuideLine[] = [];
+  for (const edge of edges) {
+    const a = rotatePx(edge.a, pivot, total);
+    const b = rotatePx(edge.b, pivot, total);
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    if (Math.abs(dy) <= MATCH_EPS && Math.abs(dx) > MATCH_EPS) {
+      const ext = extendEdge(a, b, LINE_PAD);
+      lines.push(paddedLine("h", (ext.a.y + ext.b.y) / 2, ext.a.x, ext.b.x));
+    }
+    if (Math.abs(dx) <= MATCH_EPS && Math.abs(dy) > MATCH_EPS) {
+      const ext = extendEdge(a, b, LINE_PAD);
+      lines.push(paddedLine("v", (ext.a.x + ext.b.x) / 2, ext.a.y, ext.b.y));
+    }
+  }
+  lines.push(...slotLines(boundsAfter(total), targets, threshold));
   return { dAngle, lines: mergeLines(lines) };
+}
+
+function scaledBounds(pivot: Point, b: AlignBounds, sx: number, sy: number): AlignBounds {
+  const map = (p: Point): Point => ({
+    x: pivot.x + (p.x - pivot.x) * sx,
+    y: pivot.y + (p.y - pivot.y) * sy,
+  });
+  const a = map(b.min);
+  const c = map(b.max);
+  return {
+    min: { x: Math.min(a.x, c.x), y: Math.min(a.y, c.y) },
+    max: { x: Math.max(a.x, c.x), y: Math.max(a.y, c.y) },
+  };
 }
 
 function wrapBoundsToward(b: AlignBounds, around: Point, offsets: Point[]): AlignBounds {
@@ -462,40 +606,54 @@ function extendEdge(a: Point, b: Point, pad: number): { a: Point; b: Point } {
   };
 }
 
-function rotationSnapDelta(
-  bodies: readonly Body[],
+function rotationSnapDeltaFromEdges(
+  edges: { a: Point; b: Point }[],
   pivot: Point,
   extraAngle: number,
   threshold: number,
 ): number {
   let best = 0;
   let bestAbs = Infinity;
-  for (const body of bodies) {
-    for (const edge of bodyEdgesPx(body)) {
-      const a = rotatePx(edge.a, pivot, extraAngle);
-      const b = rotatePx(edge.b, pivot, extraAngle);
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const len = Math.hypot(dx, dy);
-      if (len < 1e-4) continue;
-      const ang = Math.atan2(dy, dx);
-      if (Math.abs(dy) <= threshold) {
-        const d = wrapHalfPi(-ang);
-        if (Math.abs(d) < bestAbs) {
-          bestAbs = Math.abs(d);
-          best = d;
-        }
+  for (const edge of edges) {
+    const a = rotatePx(edge.a, pivot, extraAngle);
+    const b = rotatePx(edge.b, pivot, extraAngle);
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-4) continue;
+    const ang = Math.atan2(dy, dx);
+    if (Math.abs(dy) <= threshold) {
+      const d = wrapHalfPi(-ang);
+      if (Math.abs(d) < bestAbs) {
+        bestAbs = Math.abs(d);
+        best = d;
       }
-      if (Math.abs(dx) <= threshold) {
-        const d = wrapHalfPi(Math.PI / 2 - ang);
-        if (Math.abs(d) < bestAbs) {
-          bestAbs = Math.abs(d);
-          best = d;
-        }
+    }
+    if (Math.abs(dx) <= threshold) {
+      const d = wrapHalfPi(Math.PI / 2 - ang);
+      if (Math.abs(d) < bestAbs) {
+        bestAbs = Math.abs(d);
+        best = d;
       }
     }
   }
   return Number.isFinite(bestAbs) ? best : 0;
+}
+
+function rotatedRingBounds(ring: Point[], pivot: Point, angle: number): AlignBounds {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of ring) {
+    const q = rotatePx(p, pivot, angle);
+    minX = Math.min(minX, q.x);
+    minY = Math.min(minY, q.y);
+    maxX = Math.max(maxX, q.x);
+    maxY = Math.max(maxY, q.y);
+  }
+  if (!Number.isFinite(minX)) return { min: { x: 0, y: 0 }, max: { x: 0, y: 0 } };
+  return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
 }
 
 function rotatedGroupBounds(bodies: readonly Body[], pivot: Point, angle: number): AlignBounds {

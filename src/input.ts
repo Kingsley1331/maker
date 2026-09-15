@@ -811,13 +811,11 @@ export function setupInput({
     }
 
     if (moveAnchor && selection.selectedHoleIndex !== null) {
-      // Hole move: the hole follows the pointer inside its solid; no alignment snapping.
       const local = nearestWrapPoint(p, moveAnchor, getWrapOffsets());
       const delta = { x: local.x - moveAnchor.x, y: local.y - moveAnchor.y };
       if (delta.x !== 0 || delta.y !== 0) {
         dragged = true;
-        selection.translate(delta);
-        moveAnchor = local;
+        if (selection.translate(delta)) moveAnchor = local;
       }
       return;
     }
