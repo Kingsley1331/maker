@@ -119,6 +119,12 @@ export interface UiOptions {
   onNudgeSelection(dPx: Point): void;
   /** Union overlapping/touching filled shapes into the selected body (paused only). */
   onMergeSelection(): void;
+  /** Snapshot the scene before a property edit. Coalesces while a gesture is open. */
+  onBeforeEdit(): void;
+  /** Close the current property-edit gesture. */
+  onAfterEdit(): void;
+  onUndo(): void;
+  onRedo(): void;
 }
 
 export interface SpraySample {
@@ -242,6 +248,10 @@ export function setupUi({
   onDuplicateSelection,
   onNudgeSelection,
   onMergeSelection,
+  onBeforeEdit,
+  onAfterEdit,
+  onUndo,
+  onRedo,
 }: UiOptions): Ui {
   let selectedShape: ShapeType = "circle";
   let activeTool: ActiveTool = { kind: "shape", shape: selectedShape };
@@ -335,6 +345,19 @@ export function setupUi({
 
   window.addEventListener("keydown", (event) => {
     if (helpDialog.open) return;
+
+    if ((event.ctrlKey || event.metaKey) && (event.key === "z" || event.key === "Z")) {
+      event.preventDefault();
+      if (event.shiftKey) onRedo();
+      else onUndo();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && (event.key === "y" || event.key === "Y")) {
+      event.preventDefault();
+      onRedo();
+      return;
+    }
+
     // Don't hijack keys when a form control has focus (a focused button already clicks on Space).
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLButtonElement) return;
 
@@ -1012,43 +1035,65 @@ export function setupUi({
     bindActivate(button, () => {
       const type = button.dataset.bodyType;
       if (!isBodyType(type)) return;
+      onBeforeEdit();
       onBodyTypeChange(type);
+      onAfterEdit();
       button.blur();
     });
   }
 
   wallsOnly.addEventListener("change", () => {
+    onBeforeEdit();
     onWallsOnlyChange(wallsOnly.checked);
+    onAfterEdit();
   });
+
+  function trackEditEnd(el: HTMLElement): void {
+    el.addEventListener("pointerup", () => onAfterEdit());
+    el.addEventListener("change", () => onAfterEdit());
+  }
 
   selectionMass.addEventListener("input", () => {
     const mass = Number(selectionMass.value);
     if (!Number.isFinite(mass)) return;
+    onBeforeEdit();
     onMassChange(Math.max(0.01, mass));
   });
+  trackEditEnd(selectionMass);
 
   selectionElasticity.addEventListener("input", () => {
     const value = Number(selectionElasticity.value);
     if (!Number.isFinite(value)) return;
+    onBeforeEdit();
     onSelectionElasticityChange(Math.min(1, Math.max(0, value)));
   });
+  trackEditEnd(selectionElasticity);
 
   function emitVelocity(): void {
     const vx = Number(selectionVx.value);
     const vy = Number(selectionVy.value);
     if (!Number.isFinite(vx) || !Number.isFinite(vy)) return;
+    onBeforeEdit();
     onVelocityChange(vx, vy);
   }
   selectionVx.addEventListener("input", emitVelocity);
   selectionVy.addEventListener("input", emitVelocity);
+  trackEditEnd(selectionVx);
+  trackEditEnd(selectionVy);
 
   selectionSpin.addEventListener("input", () => {
     const spin = Number(selectionSpin.value);
     if (!Number.isFinite(spin)) return;
+    onBeforeEdit();
     onSpinChange(spin);
   });
+  trackEditEnd(selectionSpin);
 
-  selectionColor.addEventListener("input", () => onColorChange(selectionColor.value));
+  selectionColor.addEventListener("input", () => {
+    onBeforeEdit();
+    onColorChange(selectionColor.value);
+  });
+  trackEditEnd(selectionColor);
 
   /** Numeric setting keys of a scheduled feature (everything except schedule / random flags). */
   type NumericKeys<T> = Exclude<keyof T, "schedule" | "random">;
@@ -1126,6 +1171,8 @@ export function setupUi({
           phase.seconds = readSeconds(seconds);
           emit();
         });
+        seconds.addEventListener("change", () => onAfterEdit());
+        seconds.addEventListener("pointerup", () => onAfterEdit());
 
         const remove = document.createElement("button");
         remove.type = "button";
@@ -1139,6 +1186,7 @@ export function setupUi({
           phases.splice(index, 1);
           renderRows();
           emit();
+          onAfterEdit();
         });
 
         row.append(kind, seconds, remove);
@@ -1163,6 +1211,7 @@ export function setupUi({
         added.focus();
         added.select();
         emit();
+        onAfterEdit();
       });
     }
     // Pressing anywhere outside the "+" button and its menu closes the menu.
@@ -1222,8 +1271,12 @@ export function setupUi({
         setMenuOpen(false);
       }
       emit();
+      onAfterEdit();
     });
-    loop.addEventListener("change", emit);
+    loop.addEventListener("change", () => {
+      emit();
+      onAfterEdit();
+    });
 
     return {
       read: readSchedule,
@@ -1287,6 +1340,7 @@ export function setupUi({
     function emit(item: Item): void {
       const index = items.indexOf(item);
       if (index < 0) return;
+      onBeforeEdit();
       const value = read(item);
       show(item, value);
       onChange(index, value);
@@ -1312,17 +1366,25 @@ export function setupUi({
       const random = root.querySelector<HTMLInputElement>('[data-role="random"]');
       if (random) {
         item.random = random;
-        random.addEventListener("change", () => emit(item));
+        random.addEventListener("change", () => {
+          emit(item);
+          onAfterEdit();
+        });
       }
-      for (const key of keys) inputs[key].addEventListener("input", () => emit(item));
+      for (const key of keys) {
+        inputs[key].addEventListener("input", () => emit(item));
+        trackEditEnd(inputs[key]);
+      }
       requireRole<HTMLButtonElement>(root, "remove").addEventListener("click", () => {
         const index = items.indexOf(item);
         if (index < 0) return;
+        onBeforeEdit();
         item.schedule.dispose();
         item.root.remove();
         items.splice(index, 1);
         retitle();
         onChange(index, null);
+        onAfterEdit();
       });
       return item;
     }
@@ -1356,7 +1418,9 @@ export function setupUi({
       list.append(item.root);
       retitle();
       write(item, defaults);
+      onBeforeEdit();
       onChange(items.length - 1, { ...defaults });
+      onAfterEdit();
       item.root.scrollIntoView({ block: "nearest" });
     });
 
@@ -1595,38 +1659,50 @@ export function setupUi({
   motorSpeed.addEventListener("input", () => {
     const speed = parseFloat(motorSpeed.value);
     showMotorSpeed(speed);
+    onBeforeEdit();
     onMotorSpeedChange(speed);
   });
+  trackEditEnd(motorSpeed);
 
   motorRange.addEventListener("input", () => {
     const value = parseFloat(motorRange.value);
     showMotorRange(value);
+    onBeforeEdit();
     onMotorRangeChange(value);
     syncMotorStartRow();
   });
+  trackEditEnd(motorRange);
 
   motorStart.addEventListener("input", () => {
     const startDeg = parseFloat(motorStart.value);
     showMotorStart(startDeg);
+    onBeforeEdit();
     onMotorStartChange(startDeg);
   });
+  trackEditEnd(motorStart);
 
   motorCollide.addEventListener("change", () => {
+    onBeforeEdit();
     onSliderCollideChange(motorCollide.checked);
+    onAfterEdit();
   });
 
   jointStiffness.addEventListener("input", () => {
     const hz = parseFloat(jointStiffness.value);
     showJointStiffness(hz);
     jointDampingRow.hidden = hz <= 0;
+    onBeforeEdit();
     onJointStiffnessChange(hz);
   });
+  trackEditEnd(jointStiffness);
 
   jointDamping.addEventListener("input", () => {
     const ratio = parseFloat(jointDamping.value);
     showJointDamping(ratio);
+    onBeforeEdit();
     onJointDampingChange(ratio);
   });
+  trackEditEnd(jointDamping);
 
   return {
     getSelectedShape: () => selectedShape,

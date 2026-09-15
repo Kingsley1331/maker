@@ -94,6 +94,10 @@ export interface InputOptions {
   setHoveredJoint(joint: Joint | null, end?: JointEnd | null): void;
   /** World-pixel offsets for wrap copies (identity when wrap is off). */
   getWrapOffsets(): Point[];
+  /** Snapshot the scene before a mutating gesture. Coalesces while a gesture is open. */
+  onBeforeEdit(): void;
+  /** Close the current mutating gesture. */
+  onAfterEdit(): void;
 }
 
 export interface Input {
@@ -134,6 +138,8 @@ export function setupInput({
   jointEndAt,
   setHoveredJoint,
   getWrapOffsets,
+  onBeforeEdit,
+  onAfterEdit,
 }: InputOptions): Input {
   const guides = createAlignGuides({ getWrapOffsets, onAfterRender });
   const selection = createSelection({
@@ -150,6 +156,8 @@ export function setupInput({
     onAfterRender,
     getWrapOffsets,
     world,
+    onBeforeEdit,
+    onAfterEdit,
     guides,
   });
 
@@ -330,6 +338,7 @@ export function setupInput({
   function stampSpray(x: number, y: number): void {
     const shape = sprayShape();
     if (!shape) return;
+    onBeforeEdit();
     const sample = getSpraySample();
     const body = createBody(world, shape, x, y, sample.size, sample.fillStyle, currentSector());
     body.setTransform(body.getPosition(), (sample.angleDeg * Math.PI) / 180);
@@ -534,6 +543,7 @@ export function setupInput({
     applyCursor();
     window.removeEventListener("mousemove", onMove);
     window.removeEventListener("mouseup", onUp);
+    onAfterEdit();
   }
 
   function onPanMove(event: MouseEvent): void {
@@ -571,6 +581,7 @@ export function setupInput({
     // The click may have landed on a wrap copy of the body; anchor on the body's real position.
     let point = unwrapTowardBody(rawPoint, body);
     if (type === "pin") {
+      onBeforeEdit();
       selectSceneJoint(createPin(world, ground, body, point));
       return;
     }
@@ -580,6 +591,7 @@ export function setupInput({
       return;
     }
     if (jointAnchor.body === body) return;
+    onBeforeEdit();
     // When wrapping, the two shapes may look adjacent on screen while sitting a whole canvas
     // apart in world space (one of them is seen through a wrap copy). Slide the second shape's
     // group onto the copy nearest the first anchor so the joint gets the geometry the user sees.
@@ -785,12 +797,16 @@ export function setupInput({
 
     if (isPolygonTool()) {
       if (draft.length < 3) return;
+      onBeforeEdit();
       if (isCut()) finishCut(trySubtractHole(world, draft));
       else if (isChainOutline()) createChain(world, draft, true);
       else createPolygon(world, draft);
+      onAfterEdit();
     } else if (isChainTool()) {
       if (draft.length < 2) return;
+      onBeforeEdit();
       createChain(world, draft);
+      onAfterEdit();
     }
     clearDraft();
     applyCursor();
@@ -812,6 +828,7 @@ export function setupInput({
       dragged = true;
       const endBody =
         anchorDrag.end === "a" ? anchorDrag.joint.getBodyA() : anchorDrag.joint.getBodyB();
+      onBeforeEdit();
       setJointEnd(anchorDrag.joint, anchorDrag.end, unwrapTowardBody(p, endBody), bodyAt(p));
       setHoveredJoint(anchorDrag.joint, anchorDrag.end);
       return;
@@ -1037,14 +1054,17 @@ export function setupInput({
     } else if (spawnStart) {
       if (isSliceTool()) {
         if (dragged) {
+          onBeforeEdit();
           const pieces = trySplitByLine(world, spawnStart, drawAt);
           if (pieces.length > 0 && isPaused()) selection.selectMembers(pieces);
         }
       } else if (isCut()) {
         if (dragged) {
           if (isBoxTool()) {
+            onBeforeEdit();
             finishCut(trySubtractHole(world, boxCutter(spawnStart, p)));
           } else if (ghost && ghost.type !== "box" && ghost.type !== "frame" && ghost.type !== "edge") {
+            onBeforeEdit();
             finishCut(
               trySubtractHole(
                 world,
@@ -1056,8 +1076,10 @@ export function setupInput({
       } else if (isBoxTool()) {
         if (isChainOutline()) {
           if (dragged) {
+            onBeforeEdit();
             createChain(world, boxCutter(spawnStart, drawAt), true);
           } else if (isClick && !clickOnlyDeselects) {
+            onBeforeEdit();
             createChain(
               world,
               boxCutter(
@@ -1068,8 +1090,10 @@ export function setupInput({
             );
           }
         } else if (dragged) {
+          onBeforeEdit();
           createBox(world, spawnStart, drawAt, ghostColor ?? randomColor());
         } else if (isClick && !clickOnlyDeselects) {
+          onBeforeEdit();
           createBox(
             world,
             { x: spawnStart.x - DEFAULT_SIZE, y: spawnStart.y - DEFAULT_SIZE },
@@ -1080,8 +1104,10 @@ export function setupInput({
         const color = ghostColor ?? randomColor();
         const thickness = getWallThickness();
         if (dragged) {
+          onBeforeEdit();
           createFrame(world, spawnStart, drawAt, thickness, color);
         } else if (isClick && !clickOnlyDeselects) {
+          onBeforeEdit();
           createFrame(
             world,
             { x: spawnStart.x - DEFAULT_SIZE, y: spawnStart.y - DEFAULT_SIZE },
@@ -1091,8 +1117,10 @@ export function setupInput({
         }
       } else if (isEdgeTool()) {
         if (dragged) {
+          onBeforeEdit();
           createEdge(world, spawnStart, drawAt, ghostColor ?? randomColor());
         } else if (isClick && !clickOnlyDeselects) {
+          onBeforeEdit();
           createEdge(
             world,
             { x: spawnStart.x - DEFAULT_SIZE, y: spawnStart.y },
@@ -1100,6 +1128,7 @@ export function setupInput({
           );
         }
       } else if (dragged && ghost && ghost.type !== "box" && ghost.type !== "frame" && ghost.type !== "edge") {
+        onBeforeEdit();
         if (isChainOutline()) {
           createChain(world, primitiveCutter(ghost.type, ghost.x, ghost.y, ghost.size, sectorFromPreview(ghost)), true);
         } else {
@@ -1115,6 +1144,7 @@ export function setupInput({
           tool.shape !== "edge" &&
           tool.shape !== "chain"
         ) {
+          onBeforeEdit();
           if (isChainOutline()) {
             createChain(world, primitiveCutter(tool.shape, spawnStart.x, spawnStart.y, DEFAULT_SIZE, currentSector()), true);
           } else {

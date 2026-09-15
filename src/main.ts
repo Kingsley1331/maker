@@ -1,5 +1,6 @@
 import { createPhysics } from "./physics";
 import { setupInput } from "./input";
+import { createHistory } from "./history";
 import { setAngleStart, setJointDamping, setJointFrequency, setJointMotor, setJointRange } from "./joints";
 import { mergeTargets, tryMergeSelection } from "./merge";
 import { deleteSelection, duplicateSelection, setPrismaticCollide } from "./scene-edit";
@@ -9,6 +10,7 @@ import {
   SCENE_FORMAT_VERSION,
   serializeScene,
   type SavedScene,
+  type SceneContent,
   type SceneSettings,
 } from "./scene-serialize";
 import { countScenes, getScene, putScene } from "./scene-store";
@@ -45,6 +47,52 @@ const physics = createPhysics(scene);
 // Start paused so the scene can be built (select, move, joint) before anything falls.
 physics.pause();
 
+const history = createHistory();
+const NUDGE_COALESCE_MS = 400;
+let nudgeTimer: ReturnType<typeof setTimeout> | null = null;
+
+function captureScene(): SceneContent {
+  return serializeScene(physics.world, physics.ground);
+}
+
+function restoreScene(content: SceneContent): void {
+  deserializeScene(physics.world, physics.ground, content);
+  input.selection.deselect();
+}
+
+function syncHistoryButtons(): void {
+  scenesUi.setHistory(history.canUndo, history.canRedo);
+}
+
+function beginEdit(): void {
+  history.begin(captureScene());
+  syncHistoryButtons();
+}
+
+function endEdit(): void {
+  if (nudgeTimer !== null) {
+    clearTimeout(nudgeTimer);
+    nudgeTimer = null;
+  }
+  history.end();
+}
+
+function undoScene(): void {
+  if (scenesUi.getView() !== "editor") return;
+  const prev = history.undo(captureScene());
+  if (!prev) return;
+  restoreScene(prev);
+  syncHistoryButtons();
+}
+
+function redoScene(): void {
+  if (scenesUi.getView() !== "editor") return;
+  const next = history.redo(captureScene());
+  if (!next) return;
+  restoreScene(next);
+  syncHistoryButtons();
+}
+
 const ui = setupUi({
   onGravityChange: (x, y) => physics.setGravity(x, y),
   onBackgroundChange: (color) => physics.setBackground(color),
@@ -53,6 +101,8 @@ const ui = setupUi({
     if (paused) {
       physics.pause();
     } else {
+      beginEdit();
+      endEdit();
       // Resizing is only allowed while paused, so resuming drops the selection.
       input.selection.deselect();
       physics.play();
@@ -60,7 +110,10 @@ const ui = setupUi({
     ui.setPaused(physics.isPaused());
   },
   onStep: () => {
-    if (physics.isPaused()) physics.stepOnce();
+    if (!physics.isPaused()) return;
+    beginEdit();
+    physics.stepOnce();
+    endEdit();
   },
   onMotorSpeedChange: (speed) => {
     const joint = input.selection.selectedJoint;
@@ -156,31 +209,50 @@ const ui = setupUi({
     if (!physics.isPaused()) return;
     const { members, selectedJoint } = input.selection;
     if (!selectedJoint && members.length === 0) return;
+    beginEdit();
     deleteSelection(physics.world, members, selectedJoint);
     input.selection.deselect();
+    endEdit();
   },
   onDuplicateSelection: () => {
     if (!physics.isPaused()) return;
     const { members, selected } = input.selection;
     if (members.length === 0) return;
+    beginEdit();
     const { primary } = duplicateSelection(physics.world, physics.ground, members, selected);
     if (primary) input.selection.select(primary);
+    endEdit();
   },
   onNudgeSelection: (dPx) => {
     if (!physics.isPaused()) return;
+    beginEdit();
     input.selection.translate(dPx);
+    if (nudgeTimer !== null) clearTimeout(nudgeTimer);
+    nudgeTimer = setTimeout(() => {
+      nudgeTimer = null;
+      history.end();
+    }, NUDGE_COALESCE_MS);
   },
   onMergeSelection: () => {
     if (!physics.isPaused()) return;
     const { members, selected } = input.selection;
     if (!selected || members.length === 0) return;
+    beginEdit();
     const absorbed = tryMergeSelection(physics.world, selected, members);
-    if (!absorbed) return;
+    if (!absorbed) {
+      endEdit();
+      return;
+    }
     const gone = new Set(absorbed);
     const remaining = members.filter((body) => !gone.has(body));
     if (!remaining.includes(selected)) remaining.unshift(selected);
     input.selection.selectMembers(remaining);
+    endEdit();
   },
+  onBeforeEdit: beginEdit,
+  onAfterEdit: endEdit,
+  onUndo: undoScene,
+  onRedo: redoScene,
 });
 
 const input = setupInput({
@@ -220,6 +292,8 @@ const input = setupInput({
   jointEndAt: (point) => physics.jointEndAt(point),
   setHoveredJoint: (joint, end) => physics.setHoveredJoint(joint, end),
   getWrapOffsets: () => physics.getWrapOffsets(),
+  onBeforeEdit: beginEdit,
+  onAfterEdit: endEdit,
 });
 
 ui.setPaused(physics.isPaused());
@@ -302,12 +376,14 @@ function resetEditor(): void {
 }
 
 function clearCurrentScene(): void {
+  beginEdit();
   resetEditor();
   clearScene(physics.world);
   ui.resetSettings();
   physics.setZoom(1);
   ui.setZoom(1);
   setCurrentScene(null);
+  endEdit();
 }
 
 async function loadScene(id: string): Promise<void> {
@@ -334,6 +410,8 @@ async function loadScene(id: string): Promise<void> {
   physics.setView(zoom, pan);
   ui.setZoom(zoom);
   setCurrentScene(scene);
+  history.clear();
+  syncHistoryButtons();
 }
 
 const scenesUi = setupScenesUi({
@@ -344,5 +422,8 @@ const scenesUi = setupScenesUi({
     clearCurrentScene();
   },
   onLoad: (id) => void loadScene(id),
+  onUndo: undoScene,
+  onRedo: redoScene,
 });
 scenesUi.setSceneTitle(null);
+syncHistoryButtons();

@@ -34,6 +34,8 @@
       </div>
       <div class="nav-actions">
         <span id="scene-title" class="scene-title" aria-live="polite">Untitled</span>
+        <button id="scene-undo" class="nav-btn" type="button" title="Undo (Ctrl+Z)" disabled>Undo</button>
+        <button id="scene-redo" class="nav-btn" type="button" title="Redo (Ctrl+Y)" disabled>Redo</button>
         <button id="scene-clear" class="nav-btn" type="button" title="Start a blank scene">Clear</button>
         <button id="scene-save-new" class="nav-btn" type="button" title="Save a copy as a new scene">
           Save as new
@@ -788,6 +790,11 @@
             the selection by one pixel. Move filled shapes so they overlap or touch, then Merge to
             join them into one shape. Edges and chains cannot merge. With a motor joint selected,
             Delete removes that joint.
+          </li>
+          <li>
+            <strong>Undo / Redo:</strong> Undo and Redo in the top bar reverse scene edits (spawn,
+            cut, joints, moves, properties, Step, and a Play run). Ctrl+Z undoes; Ctrl+Y or
+            Ctrl+Shift+Z redoes. Zoom, pan, and world settings are not recorded.
           </li>
           <li>
             <strong>Joints (paused):</strong> pick a joint tool. Joint buttons are disabled while the

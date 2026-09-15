@@ -12,6 +12,10 @@ export interface ScenesUiOptions {
   onClear(): void;
   /** Load a saved scene into the editor. */
   onLoad(id: string): void;
+  /** Restore the previous scene snapshot. */
+  onUndo(): void;
+  /** Restore the next scene snapshot. */
+  onRedo(): void;
   /** Fired after the visible view changes. */
   onViewChange?(view: View): void;
 }
@@ -23,6 +27,8 @@ export interface ScenesUi {
   refresh(): Promise<void>;
   /** Show the loaded scene's name in the nav bar (null for an unsaved scene). */
   setSceneTitle(name: string | null): void;
+  /** Enable Undo / Redo from the history stacks (ignored while the Scenes tab is showing). */
+  setHistory(canUndo: boolean, canRedo: boolean): void;
 }
 
 function requireElement<T extends HTMLElement>(id: string): T {
@@ -47,7 +53,15 @@ function formatDate(timestamp: number): string {
   });
 }
 
-export function setupScenesUi({ onSave, onSaveAsNew, onClear, onLoad, onViewChange }: ScenesUiOptions): ScenesUi {
+export function setupScenesUi({
+  onSave,
+  onSaveAsNew,
+  onClear,
+  onLoad,
+  onUndo,
+  onRedo,
+  onViewChange,
+}: ScenesUiOptions): ScenesUi {
   const tabEditor = requireElement<HTMLButtonElement>("tab-editor");
   const tabScenes = requireElement<HTMLButtonElement>("tab-scenes");
   const editorPanel = requireElement<HTMLDivElement>("app");
@@ -58,8 +72,21 @@ export function setupScenesUi({ onSave, onSaveAsNew, onClear, onLoad, onViewChan
   const saveButton = requireElement<HTMLButtonElement>("scene-save");
   const saveNewButton = requireElement<HTMLButtonElement>("scene-save-new");
   const clearButton = requireElement<HTMLButtonElement>("scene-clear");
+  const undoButton = requireElement<HTMLButtonElement>("scene-undo");
+  const redoButton = requireElement<HTMLButtonElement>("scene-redo");
 
   let view: View = "editor";
+  let canUndo = false;
+  let canRedo = false;
+
+  function syncNavActions(): void {
+    const editorOn = view === "editor";
+    saveButton.disabled = !editorOn;
+    saveNewButton.disabled = !editorOn;
+    clearButton.disabled = !editorOn;
+    undoButton.disabled = !editorOn || !canUndo;
+    redoButton.disabled = !editorOn || !canRedo;
+  }
 
   function showView(next: View): void {
     view = next;
@@ -70,8 +97,7 @@ export function setupScenesUi({ onSave, onSaveAsNew, onClear, onLoad, onViewChan
     tabScenes.classList.toggle("is-active", !editorOn);
     tabEditor.setAttribute("aria-selected", String(editorOn));
     tabScenes.setAttribute("aria-selected", String(!editorOn));
-    // Scene actions only make sense while looking at the canvas.
-    for (const button of [saveButton, saveNewButton, clearButton]) button.disabled = !editorOn;
+    syncNavActions();
     if (!editorOn) void refresh();
     onViewChange?.(next);
   }
@@ -140,16 +166,25 @@ export function setupScenesUi({ onSave, onSaveAsNew, onClear, onLoad, onViewChan
     title.title = name ?? "Unsaved scene";
   }
 
+  function setHistory(undo: boolean, redo: boolean): void {
+    canUndo = undo;
+    canRedo = redo;
+    syncNavActions();
+  }
+
   tabEditor.addEventListener("click", () => showView("editor"));
   tabScenes.addEventListener("click", () => showView("scenes"));
   saveButton.addEventListener("click", onSave);
   saveNewButton.addEventListener("click", onSaveAsNew);
   clearButton.addEventListener("click", onClear);
+  undoButton.addEventListener("click", onUndo);
+  redoButton.addEventListener("click", onRedo);
 
   return {
     getView: () => view,
     showView,
     refresh,
     setSceneTitle,
+    setHistory,
   };
 }

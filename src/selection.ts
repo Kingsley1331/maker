@@ -98,6 +98,10 @@ export interface SelectionOptions {
   /** World-pixel offsets for wrap copies (identity when wrap is off). */
   getWrapOffsets(): Point[];
   world: World;
+  /** Snapshot the scene before a mutating gesture. Coalesces while a gesture is open. */
+  onBeforeEdit(): void;
+  /** Close the current mutating gesture. */
+  onAfterEdit(): void;
   guides: AlignGuides;
 }
 
@@ -145,6 +149,8 @@ export function createSelection({
   onAfterRender,
   getWrapOffsets,
   world,
+  onBeforeEdit,
+  onAfterEdit,
   guides,
 }: SelectionOptions): Selection {
   let selected: Body | null = null;
@@ -630,6 +636,7 @@ export function createSelection({
 
   function translate(dPx: Point): boolean {
     if (members.length === 0) return false;
+    if (dPx.x !== 0 || dPx.y !== 0) onBeforeEdit();
     if (selectedHoleIndex !== null) return tryTranslateHole(selectedHoleIndex, dPx);
     translateGroup(members, vecToMeters(dPx));
     return true;
@@ -861,6 +868,7 @@ export function createSelection({
     window.removeEventListener("mousemove", onMove);
     window.removeEventListener("mouseup", onUp);
     applyHover(canvasPoint(event));
+    onAfterEdit();
   }
 
   // Capture phase so this runs before the input module's listener.
@@ -883,6 +891,7 @@ export function createSelection({
         if (drag) {
           event.stopImmediatePropagation();
           event.preventDefault();
+          onBeforeEdit();
           vertexDrag = drag;
           vertexAround = hit.vertex.worldPx;
           hoveredVertex = hit.vertex.ref;
@@ -914,11 +923,14 @@ export function createSelection({
       event.preventDefault();
 
       if (handle.kind === "mirror") {
+        onBeforeEdit();
         mirrorGroupHorizontal(members, vecToMeters(boxCentre()));
+        onAfterEdit();
         guides.clear();
         return;
       }
 
+      onBeforeEdit();
       pivot = boxCentre();
       const p = unwrapToward(raw, { x: handle.x, y: handle.y });
       if (handle.kind === "scale") {
