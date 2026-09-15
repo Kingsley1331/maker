@@ -9,7 +9,7 @@ import {
   snapDrawPoint,
   snapRadialSize,
 } from "./align-guides";
-import { boxCutter, primitiveCutter, trySplitByLine, trySubtractHole, type PunchedHole } from "./cut";
+import { boxCutter, primitiveCutter, slicePreviewChords, trySplitByLine, trySubtractHole, type PunchedHole } from "./cut";
 import { connectedBodies, groupBoundsPx, translateGroup } from "./group";
 import {
   createPin,
@@ -170,6 +170,8 @@ export function setupInput({
   let ghost: ShapePreview | null = null;
   let ghostSize = 0;
   let ghostColor: string | undefined;
+  /** Infinite-line chords through shapes the Slice drag would cut. */
+  let sliceChords: { a: Point; b: Point }[] = [];
   /** The press cleared a selection, so a plain click must not also spawn. */
   let clickOnlyDeselects = false;
   /** Paused move gesture: body centre (px) relative to the pointer at press time. */
@@ -519,6 +521,7 @@ export function setupInput({
     ghost = null;
     ghostSize = 0;
     ghostColor = undefined;
+    sliceChords = [];
     clickOnlyDeselects = false;
     moveOffset = null;
     moveAnchor = null;
@@ -898,6 +901,7 @@ export function setupInput({
         size: 0,
         fillStyle: ghostColor,
       };
+      sliceChords = isSliceTool() ? slicePreviewChords(world, spawnStart, q) : [];
       return;
     }
     if (isCornerDragTool()) {
@@ -1166,6 +1170,24 @@ export function setupInput({
         ctx.lineWidth = 1.5;
         ctx.strokeStyle = cutting ? CUT_FILL : ACCENT;
         ctx.lineCap = "round";
+        ctx.stroke();
+        ctx.restore();
+      });
+    }
+
+    if (isSliceTool() && sliceChords.length > 0) {
+      const chords = sliceChords;
+      withWrapOffsets(ctx, getWrapOffsets(), () => {
+        ctx.save();
+        ctx.setLineDash([]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = CUT_FILL;
+        ctx.lineCap = "round";
+        ctx.beginPath();
+        for (const chord of chords) {
+          ctx.moveTo(chord.a.x, chord.a.y);
+          ctx.lineTo(chord.b.x, chord.b.y);
+        }
         ctx.stroke();
         ctx.restore();
       });

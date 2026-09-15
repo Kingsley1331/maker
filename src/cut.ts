@@ -18,7 +18,7 @@ import {
   type PrimitiveShape,
   type SectorParams,
 } from "./shapes";
-import { toMeters, vecToMeters } from "./units";
+import { toMeters, vecToMeters, vecToPixels } from "./units";
 
 /** Vertices used when a circle is turned into a cut contour. */
 export const CIRCLE_CUT_SIDES = 24;
@@ -147,6 +147,74 @@ export function trySplitByLine(world: World, aWorldPx: Point, bWorldPx: Point): 
     created.push(...pieces);
   }
   return created;
+}
+
+/**
+ * World-pixel chords of the infinite line through `aWorldPx`–`bWorldPx` inside every filled body
+ * the finite drag segment actually hits. Empty when the drag would not cut.
+ */
+export function slicePreviewChords(world: World, aWorldPx: Point, bWorldPx: Point): { a: Point; b: Point }[] {
+  if (Math.hypot(bWorldPx.x - aWorldPx.x, bWorldPx.y - aWorldPx.y) < 1) return [];
+  const aWorldM = vecToMeters(aWorldPx);
+  const bWorldM = vecToMeters(bWorldPx);
+  const chords: { a: Point; b: Point }[] = [];
+  for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
+    if (!isPickable(body)) continue;
+    const contour = bodyContour(body);
+    if (!contour) continue;
+    const a = pointLocal(body, aWorldM);
+    const b = pointLocal(body, bWorldM);
+    if (!segmentHitsSolid(contour, a, b)) continue;
+    for (const local of localChords(contour, a, b)) {
+      const wa = body.getWorldPoint(local.a);
+      const wb = body.getWorldPoint(local.b);
+      chords.push({ a: vecToPixels({ x: wa.x, y: wa.y }), b: vecToPixels({ x: wb.x, y: wb.y }) });
+    }
+  }
+  return chords;
+}
+
+function localChords(contour: Contour, a: Point, b: Point): { a: Point; b: Point }[] {
+  const hits: { t: number; p: Point }[] = [];
+  collectRingHits(hits, contour.outline, a, b);
+  for (const hole of contour.holes) collectRingHits(hits, hole, a, b);
+  hits.sort((u, v) => u.t - v.t);
+  const unique: { t: number; p: Point }[] = [];
+  for (const h of hits) {
+    const last = unique[unique.length - 1];
+    if (last && Math.abs(h.t - last.t) <= POINT_EPS) continue;
+    unique.push(h);
+  }
+  const out: { a: Point; b: Point }[] = [];
+  for (let i = 0; i + 1 < unique.length; i++) {
+    const p = unique[i].p;
+    const q = unique[i + 1].p;
+    const mid = { x: (p.x + q.x) / 2, y: (p.y + q.y) / 2 };
+    if (!pointInSolid(mid, contour.outline, contour.holes)) continue;
+    out.push({ a: p, b: q });
+  }
+  return out;
+}
+
+function collectRingHits(hits: { t: number; p: Point }[], ring: Point[], a: Point, b: Point): void {
+  const abx = b.x - a.x;
+  const aby = b.y - a.y;
+  const ab2 = abx * abx + aby * aby;
+  if (ab2 < LINE_EPS * LINE_EPS) return;
+  const edgeSlack = 1e-6;
+  for (let i = 0; i < ring.length; i++) {
+    const p = ring[i];
+    const q = ring[(i + 1) % ring.length];
+    const hit = lineIntersect(p, q, a, b);
+    if (!hit) continue;
+    const dx = q.x - p.x;
+    const dy = q.y - p.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 < LINE_EPS * LINE_EPS) continue;
+    const s = ((hit.x - p.x) * dx + (hit.y - p.y) * dy) / len2;
+    if (s < -edgeSlack || s > 1 + edgeSlack) continue;
+    hits.push({ t: ((hit.x - a.x) * abx + (hit.y - a.y) * aby) / ab2, p: hit });
+  }
 }
 
 function pointLocal(body: Body, worldM: Point): Point {
