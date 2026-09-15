@@ -48,7 +48,7 @@ import {
   type SchedulePhase,
   type ShapeType,
 } from "./shapes";
-import { FRICTION, LINEAR_DAMPING, RESTITUTION, toPixels } from "./units";
+import { FRICTION, LINEAR_DAMPING, RESTITUTION, toPixels, type Point } from "./units";
 
 export type ActiveTool =
   | { kind: "none" }
@@ -114,6 +114,8 @@ export interface UiOptions {
   onDeleteSelection(): void;
   /** Duplicate the current body/group (paused only). */
   onDuplicateSelection(): void;
+  /** Move the current body/group by `dPx` world pixels (paused only). */
+  onNudgeSelection(dPx: Point): void;
   /** Union overlapping/touching filled shapes into the selected body (paused only). */
   onMergeSelection(): void;
 }
@@ -237,6 +239,7 @@ export function setupUi({
   onToolChange,
   onDeleteSelection,
   onDuplicateSelection,
+  onNudgeSelection,
   onMergeSelection,
 }: UiOptions): Ui {
   let selectedShape: ShapeType = "circle";
@@ -371,6 +374,23 @@ export function setupUi({
     if ((event.ctrlKey || event.metaKey) && (event.key === "d" || event.key === "D")) {
       event.preventDefault();
       onDuplicateSelection();
+      return;
+    }
+
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const nudge =
+      event.key === "ArrowLeft"
+        ? { x: -1, y: 0 }
+        : event.key === "ArrowRight"
+          ? { x: 1, y: 0 }
+          : event.key === "ArrowUp"
+            ? { x: 0, y: -1 }
+            : event.key === "ArrowDown"
+              ? { x: 0, y: 1 }
+              : null;
+    if (nudge) {
+      event.preventDefault();
+      onNudgeSelection(nudge);
     }
   });
 

@@ -166,6 +166,10 @@ const ui = setupUi({
     const { primary } = duplicateSelection(physics.world, physics.ground, members, selected);
     if (primary) input.selection.select(primary);
   },
+  onNudgeSelection: (dPx) => {
+    if (!physics.isPaused()) return;
+    input.selection.translate(dPx);
+  },
   onMergeSelection: () => {
     if (!physics.isPaused()) return;
     const { members, selected } = input.selection;
