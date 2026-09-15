@@ -99,6 +99,11 @@
               <circle cx="12" cy="12" r="8" fill="currentColor" />
             </svg>
           </button>
+          <button class="shape-btn" data-shape="sector" title="Sector / ring" aria-label="Sector">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 12 L12 4 A8 8 0 0 1 20 12 Z" fill="currentColor" />
+            </svg>
+          </button>
           <button class="shape-btn" data-shape="rectangle" title="Rectangle" aria-label="Rectangle">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <rect x="4" y="4" width="16" height="16" rx="1" fill="currentColor" />
@@ -268,6 +273,19 @@
           <dt>Thickness</dt>
           <dd><input id="wall-thickness" type="number" min="2" step="1" value="12" /></dd>
         </dl>
+      </div>
+
+      <div id="sector-info" class="group" hidden>
+        <span class="label">Sector</span>
+        <canvas id="sector-preview" class="shape-preview" width="72" height="72" aria-hidden="true"></canvas>
+        <label class="slider" for="sector-deg">
+          <span class="label">Sector <output id="sector-deg-value">360°</output></span>
+          <input id="sector-deg" type="range" min="1" max="360" step="1" value="360" />
+        </label>
+        <label class="slider" for="sector-inner">
+          <span class="label">Inner radius <output id="sector-inner-value">0.00</output></span>
+          <input id="sector-inner" type="range" min="0" max="0.95" step="0.01" value="0" />
+        </label>
       </div>
 
       <div class="group">
@@ -671,19 +689,19 @@
             spawn anything.
           </li>
           <li>
-            <strong>Spray:</strong> with a circle, rectangle, triangle, pentagon, or hexagon selected,
+            <strong>Spray:</strong> with a circle, sector, rectangle, triangle, pentagon, or hexagon selected,
             turn Spray on and drag to stamp tiny copies along the cursor. Set defaults in the Spray
             panel; Rand picks that property at random in the min–max range (two colours for colour)
             for each stamp.
           </li>
           <li>
-            <strong>Cut:</strong> pick a circle, rectangle, triangle, pentagon, hexagon, box, or
+            <strong>Cut:</strong> pick a circle, sector, rectangle, triangle, pentagon, hexagon, box, or
             polygon as the cutter. While paused, drag to subtract from every overlapping body. A
             cutter fully inside a body punches a hole; one that hangs off the edge still cuts, and
             if it severs a solid the pieces become separate shapes.
           </li>
           <li>
-            <strong>Chain outline:</strong> pick a circle, rectangle, triangle, pentagon, hexagon,
+            <strong>Chain outline:</strong> pick a circle, sector, rectangle, triangle, pentagon, hexagon,
             box, or polygon, turn Chain on, then click or drag as usual. The result is a static
             closed outline that other shapes collide with, instead of a filled body. Spray and Cut
             turn off when Chain is on.
@@ -695,6 +713,11 @@
           <li>
             <strong>Walls tool:</strong> same corner-to-corner drag as Box, but the result is a hollow
             rectangle of four walls. Set wall thickness in the Walls panel.
+          </li>
+          <li>
+            <strong>Sector tool:</strong> click or drag like Circle. Sector sets the wedge (90° is a
+            quarter, 180° a semicircle, 360° a full disk). Inner radius cuts a concentric hole
+            (0 is solid, 0.9 is a thin ring). Combine both for a curved ring segment.
           </li>
           <li>
             <strong>Edge tool:</strong> press empty space and drag to draw a static line that other

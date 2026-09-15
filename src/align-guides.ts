@@ -1,6 +1,15 @@
 import type { Body, ChainShape, CircleShape, EdgeShape, PolygonShape, World } from "planck";
 import { bodyBoundsPx, nearestWrapPoint, withWrapOffsets, type AfterRender } from "./physics";
-import { getBodyData, isPickable, regularPolygon, type PrimitiveShape } from "./shapes";
+import {
+  circularSectorContour,
+  DEFAULT_INNER_RADIUS,
+  DEFAULT_SECTOR_DEG,
+  getBodyData,
+  isPickable,
+  regularPolygon,
+  type PrimitiveShape,
+  type SectorParams,
+} from "./shapes";
 import { toPixels, vecToPixels, type Point } from "./units";
 
 /** Screen-pixel distance at which edges/centres snap and guides appear. */
@@ -115,9 +124,33 @@ export function snapBoxPointer(
   return { point, lines: slotLines(bounds, targets, MATCH_EPS) };
 }
 
-export function radialPreviewBounds(type: PrimitiveShape, x: number, y: number, size: number): AlignBounds {
+export function radialPreviewBounds(
+  type: PrimitiveShape,
+  x: number,
+  y: number,
+  size: number,
+  sector?: SectorParams,
+): AlignBounds {
   if (type === "circle" || type === "rectangle") {
     return { min: { x: x - size, y: y - size }, max: { x: x + size, y: y + size } };
+  }
+  if (type === "sector") {
+    const { outline } = circularSectorContour(
+      size,
+      sector?.sectorDeg ?? DEFAULT_SECTOR_DEG,
+      sector?.innerRatio ?? DEFAULT_INNER_RADIUS,
+    );
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const v of outline) {
+      minX = Math.min(minX, x + v.x);
+      minY = Math.min(minY, y + v.y);
+      maxX = Math.max(maxX, x + v.x);
+      maxY = Math.max(maxY, y + v.y);
+    }
+    return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
   }
   const radius = type === "triangle" ? size * 1.2 : size;
   const sides = type === "triangle" ? 3 : type === "pentagon" ? 5 : 6;

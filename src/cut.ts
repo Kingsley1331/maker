@@ -6,13 +6,17 @@ import { buildJoint, isSceneJoint, jointBlueprint } from "./scene-edit";
 import {
   applyCollisionFilter,
   boxBounds,
+  circularSectorContour,
   cloneBodyData,
+  DEFAULT_INNER_RADIUS,
+  DEFAULT_SECTOR_DEG,
   FIXTURE,
   getBodyData,
   isPickable,
   regularPolygon,
   type Point,
   type PrimitiveShape,
+  type SectorParams,
 } from "./shapes";
 import { vecToMeters } from "./units";
 
@@ -29,7 +33,13 @@ export interface Contour {
 }
 
 /** World-pixel ring for a primitive cutter centred at `(x, y)`. */
-export function primitiveCutter(type: PrimitiveShape, x: number, y: number, size: number): Point[] {
+export function primitiveCutter(
+  type: PrimitiveShape,
+  x: number,
+  y: number,
+  size: number,
+  sector?: SectorParams,
+): Point[] {
   if (type === "rectangle") {
     return [
       { x: x - size, y: y - size },
@@ -37,6 +47,14 @@ export function primitiveCutter(type: PrimitiveShape, x: number, y: number, size
       { x: x + size, y: y + size },
       { x: x - size, y: y + size },
     ];
+  }
+  if (type === "sector") {
+    const { outline } = circularSectorContour(
+      size,
+      sector?.sectorDeg ?? DEFAULT_SECTOR_DEG,
+      sector?.innerRatio ?? DEFAULT_INNER_RADIUS,
+    );
+    return outline.map((p) => ({ x: x + p.x, y: y + p.y }));
   }
   const radius = type === "triangle" ? size * 1.2 : size;
   const sides = type === "circle" ? CIRCLE_CUT_SIDES : type === "triangle" ? 3 : type === "pentagon" ? 5 : 6;

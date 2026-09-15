@@ -448,6 +448,15 @@ body {
   pointer-events: none;
 }
 
+.shape-preview {
+  display: block;
+  width: 72px;
+  height: 72px;
+  margin: 0 auto;
+  background: #2a2f3a;
+  border-radius: 6px;
+}
+
 .check-row {
   display: flex;
   align-items: center;

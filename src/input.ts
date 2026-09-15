@@ -45,6 +45,7 @@ import {
   type JointUserData,
   type Point,
   type PrimitiveShape,
+  type SectorParams,
   type ShapePreview,
 } from "./shapes";
 import type { ActiveTool, SpraySample } from "./ui";
@@ -76,6 +77,8 @@ export interface InputOptions {
   getSpraySample(): SpraySample;
   getSpraySize(): number;
   getWallThickness(): number;
+  getSectorDeg(): number;
+  getInnerRadius(): number;
   onSelectionUpdate(body: Body | null, members: Body[]): void;
   onJointSelectionUpdate(joint: Joint | null): void;
   onZoomChange(zoom: number): void;
@@ -115,6 +118,8 @@ export function setupInput({
   getSpraySample,
   getSpraySize,
   getWallThickness,
+  getSectorDeg,
+  getInnerRadius,
   onSelectionUpdate,
   onJointSelectionUpdate,
   onZoomChange,
@@ -254,6 +259,17 @@ export function setupInput({
     return tool.kind === "shape" && tool.shape === "edge";
   }
 
+  function currentSector(): SectorParams {
+    return { sectorDeg: getSectorDeg(), innerRatio: getInnerRadius() };
+  }
+
+  function sectorFromPreview(preview: ShapePreview): SectorParams {
+    return {
+      sectorDeg: preview.sectorDeg ?? currentSector().sectorDeg,
+      innerRatio: preview.innerRatio ?? currentSector().innerRatio,
+    };
+  }
+
   function isCornerDragTool(): boolean {
     return isBoxTool() || isFrameTool();
   }
@@ -278,7 +294,7 @@ export function setupInput({
     const shape = sprayShape();
     if (!shape) return;
     const sample = getSpraySample();
-    const body = createBody(world, shape, x, y, sample.size, sample.fillStyle);
+    const body = createBody(world, shape, x, y, sample.size, sample.fillStyle, currentSector());
     body.setTransform(body.getPosition(), (sample.angleDeg * Math.PI) / 180);
     setBodyMass(body, sample.mass);
     body.setLinearVelocity(vecToMeters({ x: sample.vxPx, y: sample.vyPx }));
@@ -446,7 +462,14 @@ export function setupInput({
       return;
     }
     ghostColor ??= isCut() ? CUT_FILL : randomColor();
-    ghost = { type: tool.shape, x: spawnStart.x, y: spawnStart.y, size, fillStyle: ghostColor };
+    ghost = {
+      type: tool.shape,
+      x: spawnStart.x,
+      y: spawnStart.y,
+      size,
+      fillStyle: ghostColor,
+      ...(tool.shape === "sector" ? currentSector() : {}),
+    };
     ghostSize = size;
   }
 
@@ -842,7 +865,7 @@ export function setupInput({
     if (alignmentOn()) {
       const tool = getActiveTool();
       if (tool.kind === "shape" && isPrimitiveShape(tool.shape)) {
-        const bounds = radialPreviewBounds(tool.shape, spawnStart.x, spawnStart.y, size);
+        const bounds = radialPreviewBounds(tool.shape, spawnStart.x, spawnStart.y, size, currentSector());
         const snapped = snapRadialSize(
           spawnStart,
           size,
@@ -945,7 +968,7 @@ export function setupInput({
           if (isBoxTool()) {
             trySubtractHole(world, boxCutter(spawnStart, p));
           } else if (ghost && ghost.type !== "box" && ghost.type !== "frame" && ghost.type !== "edge") {
-            trySubtractHole(world, primitiveCutter(ghost.type, ghost.x, ghost.y, ghost.size));
+            trySubtractHole(world, primitiveCutter(ghost.type, ghost.x, ghost.y, ghost.size, sectorFromPreview(ghost)));
           }
         }
       } else if (isBoxTool()) {
@@ -996,9 +1019,9 @@ export function setupInput({
         }
       } else if (dragged && ghost && ghost.type !== "box" && ghost.type !== "frame" && ghost.type !== "edge") {
         if (isChainOutline()) {
-          createChain(world, primitiveCutter(ghost.type, ghost.x, ghost.y, ghost.size), true);
+          createChain(world, primitiveCutter(ghost.type, ghost.x, ghost.y, ghost.size, sectorFromPreview(ghost)), true);
         } else {
-          createBody(world, ghost.type, ghost.x, ghost.y, ghost.size, ghost.fillStyle);
+          createBody(world, ghost.type, ghost.x, ghost.y, ghost.size, ghost.fillStyle, sectorFromPreview(ghost));
         }
       } else if (isClick && !clickOnlyDeselects) {
         const tool = getActiveTool();
@@ -1011,9 +1034,9 @@ export function setupInput({
           tool.shape !== "chain"
         ) {
           if (isChainOutline()) {
-            createChain(world, primitiveCutter(tool.shape, spawnStart.x, spawnStart.y, DEFAULT_SIZE), true);
+            createChain(world, primitiveCutter(tool.shape, spawnStart.x, spawnStart.y, DEFAULT_SIZE, currentSector()), true);
           } else {
-            createBody(world, tool.shape, spawnStart.x, spawnStart.y, DEFAULT_SIZE);
+            createBody(world, tool.shape, spawnStart.x, spawnStart.y, DEFAULT_SIZE, randomColor(), currentSector());
           }
         }
       }

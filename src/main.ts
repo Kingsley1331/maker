@@ -184,6 +184,8 @@ const input = setupInput({
   getSpraySample: () => ui.getSpraySample(),
   getSpraySize: () => ui.getSpraySize(),
   getWallThickness: () => ui.getWallThickness(),
+  getSectorDeg: () => ui.getSectorDeg(),
+  getInnerRadius: () => ui.getInnerRadius(),
   onSelectionUpdate: (body, members) => ui.showSelectionInfo(body, members),
   onJointSelectionUpdate: (joint) => {
     physics.setSelectedJoint(joint);

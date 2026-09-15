@@ -1,3 +1,4 @@
+import earcut from "earcut";
 import { Box, Chain, Circle, Edge, Polygon, Settings, type Body, type World } from "planck";
 import decomp from "poly-decomp";
 import {
@@ -14,11 +15,12 @@ Settings.maxPolygonVertices = 16;
 /** Restitution is applied at all impact speeds; the default 1 m/s cutoff made high-bounce feel inelastic. */
 Settings.velocityThreshold = 0;
 
-export type PrimitiveShape = "circle" | "rectangle" | "triangle" | "pentagon" | "hexagon";
+export type PrimitiveShape = "circle" | "sector" | "rectangle" | "triangle" | "pentagon" | "hexagon";
 export type ShapeType = PrimitiveShape | "polygon" | "box" | "frame" | "edge" | "chain";
 
 export const PRIMITIVE_SHAPES: PrimitiveShape[] = [
   "circle",
+  "sector",
   "rectangle",
   "triangle",
   "pentagon",
@@ -42,6 +44,26 @@ export const DEFAULT_WALL_THICKNESS = 12;
 export const MIN_WALL_THICKNESS = 2;
 /** Inner opening kept when clamping a frame so the hole never collapses (px). */
 const FRAME_INNER_GAP = 4;
+
+/** Default sector sweep for the circle-sector tool (degrees). */
+export const DEFAULT_SECTOR_DEG = 360;
+export const MIN_SECTOR_DEG = 1;
+export const MAX_SECTOR_DEG = 360;
+/** Inner cut-out as a fraction of the outer radius; 0 is solid, 0.9 is a thin ring. */
+export const DEFAULT_INNER_RADIUS = 0;
+export const MAX_INNER_RADIUS = 0.95;
+/** Vertices used for a full-turn sector / ring outline. */
+const SECTOR_ARC_SIDES = 32;
+
+export interface SectorParams {
+  sectorDeg: number;
+  innerRatio: number;
+}
+
+export interface SectorContour {
+  outline: Point[];
+  holes: Point[][];
+}
 
 export type { Point };
 
@@ -197,6 +219,10 @@ export interface ShapePreview {
   /** Segment end in px when `type` is `"edge"` (`x`/`y` are the start). */
   x2?: number;
   y2?: number;
+  /** Sweep in degrees when `type` is `"sector"`. */
+  sectorDeg?: number;
+  /** Inner radius as a fraction of `size` when `type` is `"sector"`. */
+  innerRatio?: number;
 }
 
 export interface JointUserData {
@@ -339,11 +365,118 @@ function primitiveLabel(type: PrimitiveShape): string {
   switch (type) {
     case "circle":
       return "Circle Body";
+    case "sector":
+      return "Sector Body";
     case "rectangle":
       return "Rectangle Body";
     default:
       return "Polygon Body";
   }
+}
+
+export function clampSectorDeg(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_SECTOR_DEG;
+  return Math.min(MAX_SECTOR_DEG, Math.max(MIN_SECTOR_DEG, value));
+}
+
+export function clampInnerRadius(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_INNER_RADIUS;
+  return Math.min(MAX_INNER_RADIUS, Math.max(0, value));
+}
+
+function arcPoints(radius: number, start: number, sweep: number, count: number): Point[] {
+  const n = Math.max(2, count);
+  const pts: Point[] = [];
+  for (let i = 0; i < n; i++) {
+    const t = i / (n - 1);
+    const a = start + sweep * t;
+    pts.push({ x: radius * Math.cos(a), y: radius * Math.sin(a) });
+  }
+  return pts;
+}
+
+function closedArc(radius: number, sides: number): Point[] {
+  const n = Math.max(3, sides);
+  const pts: Point[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i * 2 * Math.PI) / n;
+    pts.push({ x: radius * Math.cos(a), y: radius * Math.sin(a) });
+  }
+  return pts;
+}
+
+/** Local-space outline (and optional inner hole) for a circular sector / ring. */
+export function circularSectorContour(
+  radius: number,
+  sectorDeg: number,
+  innerRatio: number,
+): SectorContour {
+  const sweepDeg = clampSectorDeg(sectorDeg);
+  const inner = clampInnerRadius(innerRatio);
+  const r = Math.max(0, radius);
+  const full = sweepDeg >= MAX_SECTOR_DEG - 1e-6;
+  if (full) {
+    const outline = closedArc(r, SECTOR_ARC_SIDES);
+    if (inner <= 0) return { outline, holes: [] };
+    const hole = closedArc(r * inner, SECTOR_ARC_SIDES);
+    hole.reverse();
+    return { outline, holes: [hole] };
+  }
+  const sweep = (sweepDeg * Math.PI) / 180;
+  const arcCount = Math.max(4, Math.round((SECTOR_ARC_SIDES * sweepDeg) / 360) + 1);
+  const outer = arcPoints(r, 0, sweep, arcCount);
+  if (inner <= 0) return { outline: [{ x: 0, y: 0 }, ...outer], holes: [] };
+  const innerArc = arcPoints(r * inner, sweep, -sweep, arcCount);
+  return { outline: [...outer, ...innerArc], holes: [] };
+}
+
+function ringSignedArea(ring: Point[]): number {
+  let area = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    area += a.x * b.y - b.x * a.y;
+  }
+  return area / 2;
+}
+
+function windRing(ring: Point[], ccw: boolean): Point[] {
+  const copy = ring.map((p) => ({ x: p.x, y: p.y }));
+  const isCcw = ringSignedArea(copy) > 0;
+  if (isCcw !== ccw) copy.reverse();
+  return copy;
+}
+
+function addSectorFixtures(body: Body, contour: SectorContour): boolean {
+  const outer = windRing(contour.outline, true);
+  const inner = contour.holes.map((ring) => windRing(ring, false));
+  contour.outline.splice(0, contour.outline.length, ...outer);
+  contour.holes.splice(0, contour.holes.length, ...inner);
+  const verts: number[] = [];
+  const holeIndices: number[] = [];
+  for (const p of outer) verts.push(p.x, p.y);
+  for (const hole of inner) {
+    holeIndices.push(verts.length / 2);
+    for (const p of hole) verts.push(p.x, p.y);
+  }
+  let indices: number[];
+  try {
+    indices = earcut(verts, holeIndices.length ? holeIndices : undefined, 2);
+  } catch {
+    return inner.length === 0 && addConvexFixture(body, outer);
+  }
+  let added = false;
+  for (let i = 0; i < indices.length; i += 3) {
+    const tri = [indices[i], indices[i + 1], indices[i + 2]].map((idx) => ({
+      x: verts[idx * 2],
+      y: verts[idx * 2 + 1],
+    }));
+    if (Math.abs(ringSignedArea(tri)) < 1e-12) continue;
+    if (ringSignedArea(tri) < 0) tri.reverse();
+    if (addConvexFixture(body, tri)) added = true;
+  }
+  if (!added && inner.length === 0) return addConvexFixture(body, outer);
+  return added;
 }
 
 export function regularPolygon(n: number, radius: number): Point[] {
@@ -410,7 +543,14 @@ export function createBody(
   y: number,
   size: number = DEFAULT_SIZE,
   fillStyle: string = randomColor(),
+  sector: SectorParams = { sectorDeg: DEFAULT_SECTOR_DEG, innerRatio: DEFAULT_INNER_RADIUS },
 ): Body {
+  const radiusM = toMeters(size);
+  const sectorContour =
+    type === "sector"
+      ? circularSectorContour(radiusM, sector.sectorDeg, sector.innerRatio)
+      : null;
+
   const body = world.createDynamicBody({
     position: vecToMeters({ x, y }),
     ...dampingProps(),
@@ -418,14 +558,21 @@ export function createBody(
       kind: "shape",
       label: primitiveLabel(type),
       fillStyle,
+      ...(sectorContour
+        ? {
+            outline: sectorContour.outline,
+            ...(sectorContour.holes.length > 0 ? { holes: sectorContour.holes } : {}),
+          }
+        : {}),
     } satisfies BodyUserData,
   });
-
-  const radiusM = toMeters(size);
 
   switch (type) {
     case "circle":
       body.createFixture({ shape: new Circle(radiusM), ...FIXTURE });
+      break;
+    case "sector":
+      if (sectorContour) addSectorFixtures(body, sectorContour);
       break;
     case "rectangle":
       body.createFixture({ shape: new Box(radiusM, radiusM), ...FIXTURE });
@@ -760,6 +907,24 @@ export function tracePreview(ctx: CanvasRenderingContext2D, preview: ShapePrevie
   const size = preview.size;
   if (type === "circle") {
     ctx.arc(x, y, size, 0, Math.PI * 2);
+    return;
+  }
+  if (type === "sector") {
+    const { outline, holes } = circularSectorContour(
+      size,
+      preview.sectorDeg ?? DEFAULT_SECTOR_DEG,
+      preview.innerRatio ?? DEFAULT_INNER_RADIUS,
+    );
+    if (outline.length < 2) return;
+    ctx.moveTo(x + outline[0].x, y + outline[0].y);
+    for (let i = 1; i < outline.length; i++) ctx.lineTo(x + outline[i].x, y + outline[i].y);
+    ctx.closePath();
+    for (const hole of holes) {
+      if (hole.length < 3) continue;
+      ctx.moveTo(x + hole[0].x, y + hole[0].y);
+      for (let i = 1; i < hole.length; i++) ctx.lineTo(x + hole[i].x, y + hole[i].y);
+      ctx.closePath();
+    }
     return;
   }
   if (type === "rectangle") {

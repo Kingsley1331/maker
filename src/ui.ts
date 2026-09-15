@@ -23,16 +23,22 @@ import { bodyLabel, groupBoundsPx } from "./group";
 import { bodyBoundsPx, MAX_ZOOM, MIN_ZOOM } from "./physics";
 import {
   DEFAULT_FILL,
+  DEFAULT_INNER_RADIUS,
   DEFAULT_PHASE_SECONDS,
   DEFAULT_SCHEDULE,
+  DEFAULT_SECTOR_DEG,
   DEFAULT_STREAM,
   DEFAULT_WALL_THICKNESS,
   DEFAULT_WIND,
+  clampInnerRadius,
+  clampSectorDeg,
   getBodyData,
   getBodyRestitution,
   isPrimitiveShape,
+  MAX_INNER_RADIUS,
   MIN_WALL_THICKNESS,
   SHAPE_TYPES,
+  tracePreview,
   type DirectionalForce,
   type JointUserData,
   type ParticleStream,
@@ -152,6 +158,10 @@ export interface Ui {
   getSpraySize(): number;
   /** Wall thickness in px for the four-sided frame tool. */
   getWallThickness(): number;
+  /** Sector sweep in degrees for the circle-sector tool. */
+  getSectorDeg(): number;
+  /** Inner radius as a fraction of the outer radius for the circle-sector tool. */
+  getInnerRadius(): number;
   /**
    * Show (or hide, when null) the readout for the current selection. `members` is every selected
    * shape; more than one means a jointed group.
@@ -451,6 +461,7 @@ export function setupUi({
     syncCut();
     syncChain();
     syncFrameInfo();
+    syncSectorInfo();
     onToolChange(tool);
   }
 
@@ -701,6 +712,89 @@ export function setupUi({
   }
 
   syncFrameInfo();
+
+  const sectorInfo = requireElement<HTMLDivElement>("sector-info");
+  const sectorDeg = requireElement<HTMLInputElement>("sector-deg");
+  const sectorDegValue = requireElement<HTMLOutputElement>("sector-deg-value");
+  const sectorInner = requireElement<HTMLInputElement>("sector-inner");
+  const sectorInnerValue = requireElement<HTMLOutputElement>("sector-inner-value");
+  const sectorPreview = requireElement<HTMLCanvasElement>("sector-preview");
+  const sectorPreviewCtx = sectorPreview.getContext("2d");
+
+  /** Redraw the panel thumbnail from the current slider values. */
+  function drawSectorPreview(): void {
+    const ctx = sectorPreviewCtx;
+    if (!ctx) return;
+    const cssW = sectorPreview.clientWidth || sectorPreview.width;
+    const cssH = sectorPreview.clientHeight || sectorPreview.height;
+    const dpr = window.devicePixelRatio || 1;
+    const pxW = Math.max(1, Math.round(cssW * dpr));
+    const pxH = Math.max(1, Math.round(cssH * dpr));
+    if (sectorPreview.width !== pxW || sectorPreview.height !== pxH) {
+      sectorPreview.width = pxW;
+      sectorPreview.height = pxH;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssW, cssH);
+    tracePreview(ctx, {
+      type: "sector",
+      x: cssW / 2,
+      y: cssH / 2,
+      size: Math.min(cssW, cssH) * 0.4,
+      fillStyle: DEFAULT_FILL,
+      sectorDeg: getSectorDeg(),
+      innerRatio: getInnerRadius(),
+    });
+    ctx.fillStyle = DEFAULT_FILL;
+    ctx.fill("evenodd");
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.35)";
+    ctx.lineWidth = 1;
+    ctx.lineJoin = "round";
+    ctx.stroke();
+  }
+
+  function syncSectorInfo(): void {
+    const show = activeTool.kind === "shape" && activeTool.shape === "sector";
+    sectorInfo.hidden = !show;
+    if (show) drawSectorPreview();
+  }
+
+  function showSectorDeg(value: number): void {
+    sectorDegValue.textContent = `${Math.round(value)}°`;
+  }
+
+  function showInnerRadius(value: number): void {
+    sectorInnerValue.textContent = value.toFixed(2);
+  }
+
+  function getSectorDeg(): number {
+    return clampSectorDeg(parseFinite(sectorDeg, DEFAULT_SECTOR_DEG));
+  }
+
+  function getInnerRadius(): number {
+    return clampInnerRadius(parseFinite(sectorInner, DEFAULT_INNER_RADIUS));
+  }
+
+  function applySectorDeg(): void {
+    const value = getSectorDeg();
+    sectorDeg.value = String(value);
+    showSectorDeg(value);
+    drawSectorPreview();
+  }
+
+  function applyInnerRadius(): void {
+    const value = getInnerRadius();
+    sectorInner.max = String(MAX_INNER_RADIUS);
+    sectorInner.value = String(value);
+    showInnerRadius(value);
+    drawSectorPreview();
+  }
+
+  sectorDeg.addEventListener("input", applySectorDeg);
+  sectorInner.addEventListener("input", applyInnerRadius);
+  applySectorDeg();
+  applyInnerRadius();
+  syncSectorInfo();
 
   function getSpraySample(): SpraySample {
     const a = /^#[0-9a-fA-F]{6}$/.test(sprayColor.value) ? sprayColor.value : DEFAULT_FILL;
@@ -1478,6 +1572,8 @@ export function setupUi({
     getSpraySample,
     getSpraySize,
     getWallThickness,
+    getSectorDeg,
+    getInnerRadius,
     showSelectionInfo,
     showMotorInfo,
     setActiveTool,
