@@ -9,7 +9,7 @@ import {
   snapDrawPoint,
   snapRadialSize,
 } from "./align-guides";
-import { boxCutter, primitiveCutter, trySubtractHole, type PunchedHole } from "./cut";
+import { boxCutter, primitiveCutter, trySplitByLine, trySubtractHole, type PunchedHole } from "./cut";
 import { connectedBodies, groupBoundsPx, translateGroup } from "./group";
 import {
   createPin,
@@ -257,6 +257,10 @@ export function setupInput({
     return getActiveTool().kind === "zoom";
   }
 
+  function isSliceTool(): boolean {
+    return getActiveTool().kind === "slice";
+  }
+
   function isShapeTool(): boolean {
     return getActiveTool().kind === "shape";
   }
@@ -382,6 +386,7 @@ export function setupInput({
     else if (
       isSpray() ||
       isCut() ||
+      isSliceTool() ||
       isChainOutline() ||
       isDraftTool() ||
       isCornerDragTool() ||
@@ -400,6 +405,7 @@ export function setupInput({
       isPaused() &&
       !isSpray() &&
       !isCut() &&
+      !isSliceTool() &&
       !panning &&
       !moveOffset &&
       !anchorDrag &&
@@ -650,7 +656,7 @@ export function setupInput({
     // Pause-click a pin / revolute / wheel pivot to select it for the motor sliders. This wins
     // over joint placement (so you can click a pin you just made) unless a two-click joint is
     // waiting for its second body, or a polygon/chain is mid-draw.
-    if (isPaused() && !isCut() && jointAnchor === null && !(isDraftTool() && draft.length > 0)) {
+    if (isPaused() && !isCut() && !isSliceTool() && jointAnchor === null && !(isDraftTool() && draft.length > 0)) {
       const hitJoint = jointAt(p);
       if (hitJoint) {
         selection.selectJoint(hitJoint);
@@ -703,7 +709,7 @@ export function setupInput({
     // Paused: a press inside a cutout hole selects that hole (holes have no fixtures, so
     // `bodyAt` misses them) and drags it. The selection module already owns presses inside
     // the currently selected hole's box, so this only fires for a not-yet-selected hole.
-    const holeHit = isPaused() && !isCut() ? holeUnderPointer(p) : null;
+    const holeHit = isPaused() && !isCut() && !isSliceTool() ? holeUnderPointer(p) : null;
     if (holeHit) {
       pressedBody = holeHit.body;
       selection.selectHole(holeHit.body, holeHit.holeIndex);
@@ -715,7 +721,11 @@ export function setupInput({
       return;
     }
 
-    if (isCut()) {
+    if (isSliceTool()) {
+      selection.deselect();
+      spawnStart = p;
+      setGrabEnabled(false);
+    } else if (isCut()) {
       selection.deselect();
       if (!isDraftTool()) spawnStart = p;
       setGrabEnabled(false);
@@ -853,7 +863,7 @@ export function setupInput({
       return;
     }
 
-    if (!spawnStart || isDraftTool() || !isShapeTool()) return;
+    if (!spawnStart || isDraftTool() || !(isShapeTool() || isSliceTool())) return;
     const dist = Math.hypot(p.x - spawnStart.x, p.y - spawnStart.y);
     if (!dragged && dist <= clickSlop()) return;
 
@@ -862,7 +872,7 @@ export function setupInput({
     if (alignmentOn()) {
       const threshold = alignThreshold(getZoom());
       const targets = collectTargetBounds(world, [], p, getWrapOffsets());
-      if (isEdgeTool()) {
+      if (isEdgeTool() || isSliceTool()) {
         const snapped = snapDrawPoint(p, targets, threshold, spawnStart);
         q = snapped.point;
         guides.set(snapped.lines);
@@ -876,9 +886,9 @@ export function setupInput({
       guides.clear();
     }
 
-    if (isEdgeTool()) {
-      ghostColor ??= isCut() ? CUT_FILL : randomColor();
-      const ends = edgeEndpoints(spawnStart, q);
+    if (isEdgeTool() || isSliceTool()) {
+      ghostColor ??= isCut() || isSliceTool() ? CUT_FILL : randomColor();
+      const ends = isSliceTool() ? { a: spawnStart, b: q } : edgeEndpoints(spawnStart, q);
       ghost = {
         type: "edge",
         x: ends.a.x,
@@ -1021,7 +1031,12 @@ export function setupInput({
         else selection.selectMembers(hits);
       }
     } else if (spawnStart) {
-      if (isCut()) {
+      if (isSliceTool()) {
+        if (dragged) {
+          const pieces = trySplitByLine(world, spawnStart, drawAt);
+          if (pieces.length > 0 && isPaused()) selection.selectMembers(pieces);
+        }
+      } else if (isCut()) {
         if (dragged) {
           if (isBoxTool()) {
             finishCut(trySubtractHole(world, boxCutter(spawnStart, p)));
@@ -1139,7 +1154,7 @@ export function setupInput({
       withWrapOffsets(ctx, getWrapOffsets(), () => {
         ctx.save();
         tracePreview(ctx, preview);
-        const cutting = isCut();
+        const cutting = isCut() || isSliceTool();
         const outlining = isChainOutline();
         if (preview.type !== "edge" && !outlining) {
           ctx.globalAlpha = cutting ? 0.28 : 0.45;

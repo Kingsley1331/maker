@@ -18,7 +18,7 @@ import {
   type PrimitiveShape,
   type SectorParams,
 } from "./shapes";
-import { vecToMeters } from "./units";
+import { toMeters, vecToMeters } from "./units";
 
 /** Vertices used when a circle is turned into a cut contour. */
 export const CIRCLE_CUT_SIDES = 24;
@@ -112,6 +112,103 @@ export function trySubtractHole(world: World, cutterWorldPx: Point[]): PunchedHo
     if (holeIndex !== null) punched.push({ body, holeIndex });
   }
   return punched;
+}
+
+/** Hairline gap (px) so split pieces do not spawn with coincident faces. */
+const SLICE_SEPARATION_PX = 0.75;
+
+/**
+ * Split every filled pickable body the segment `aWorldPx`–`bWorldPx` actually crosses. The cut
+ * is the infinite line through those points; pieces become separate bodies. Returns the new
+ * bodies (originals are destroyed). Edges and chains are skipped.
+ */
+export function trySplitByLine(world: World, aWorldPx: Point, bWorldPx: Point): Body[] {
+  if (Math.hypot(bWorldPx.x - aWorldPx.x, bWorldPx.y - aWorldPx.y) < 1) return [];
+  const aWorldM = vecToMeters(aWorldPx);
+  const bWorldM = vecToMeters(bWorldPx);
+
+  const targets: Body[] = [];
+  for (let body: Body | null = world.getBodyList(); body; body = body.getNext()) {
+    if (!isPickable(body)) continue;
+    const contour = bodyContour(body);
+    if (!contour) continue;
+    const a = pointLocal(body, aWorldM);
+    const b = pointLocal(body, bWorldM);
+    if (!segmentHitsSolid(contour, a, b)) continue;
+    targets.push(body);
+  }
+
+  const created: Body[] = [];
+  for (const body of targets) {
+    const a = pointLocal(body, aWorldM);
+    const b = pointLocal(body, bWorldM);
+    const pieces = splitBodyByLine(world, body, a, b);
+    nudgePiecesApart(pieces, aWorldM, bWorldM);
+    created.push(...pieces);
+  }
+  return created;
+}
+
+function pointLocal(body: Body, worldM: Point): Point {
+  const lp = body.getLocalPoint(worldM);
+  return { x: lp.x, y: lp.y };
+}
+
+function segmentHitsSolid(contour: Contour, a: Point, b: Point): boolean {
+  if (segmentHitsRing(a, b, contour.outline)) return true;
+  for (const hole of contour.holes) {
+    if (segmentHitsRing(a, b, hole)) return true;
+  }
+  return pointInSolid(a, contour.outline, contour.holes) || pointInSolid(b, contour.outline, contour.holes);
+}
+
+function segmentHitsRing(a: Point, b: Point, ring: Point[]): boolean {
+  for (let i = 0; i < ring.length; i++) {
+    if (segmentsIntersect(a, b, ring[i], ring[(i + 1) % ring.length])) return true;
+  }
+  return false;
+}
+
+function splitBodyByLine(world: World, body: Body, a: Point, b: Point): Body[] {
+  const tris = subjectTriangles(body);
+  if (tris.length === 0) return [];
+
+  const pos: Point[][] = [];
+  const neg: Point[][] = [];
+  for (const tri of tris) {
+    for (const frag of splitPolyByLine(tri, a, b)) {
+      if (Math.abs(signedArea(frag)) <= AREA_EPS) continue;
+      if (orient(a, b, ringCentroid(frag)) >= 0) pos.push(frag);
+      else neg.push(frag);
+    }
+  }
+  if (pos.length === 0 || neg.length === 0) return [];
+
+  const prepare = (side: Point[][]): Point[][][] => {
+    const mesh = conformMesh(side.map((tri) => tri.map(snapPoint))).filter(
+      (tri) => Math.abs(signedArea(tri)) > AREA_EPS,
+    );
+    return mesh.length === 0 ? [] : connectedComponents(mesh);
+  };
+
+  const components = [...prepare(pos), ...prepare(neg)];
+  if (components.length < 2) return [];
+  return splitBody(world, body, components);
+}
+
+function nudgePiecesApart(pieces: Body[], aWorldM: Point, bWorldM: Point): void {
+  const dx = bWorldM.x - aWorldM.x;
+  const dy = bWorldM.y - aWorldM.y;
+  const len = Math.hypot(dx, dy);
+  if (len < LINE_EPS || pieces.length === 0) return;
+  const nx = -dy / len;
+  const ny = dx / len;
+  const delta = toMeters(SLICE_SEPARATION_PX);
+  for (const piece of pieces) {
+    const p = piece.getPosition();
+    const sign = orient(aWorldM, bWorldM, { x: p.x, y: p.y }) >= 0 ? 1 : -1;
+    piece.setPosition({ x: p.x + nx * sign * delta, y: p.y + ny * sign * delta });
+  }
 }
 
 /** Punch a hole and return its index, or `null` for an edge bite / split / miss. */
@@ -347,7 +444,7 @@ function subtractOverlap(world: World, body: Body, cutterLocal: Point[]): boolea
 
   const components = connectedComponents(tris);
   if (components.length === 1) return rebuildBodyFromTris(body, components[0]);
-  return splitBody(world, body, components);
+  return splitBody(world, body, components).length > 0;
 }
 
 function subjectTriangles(body: Body): Point[][] {
@@ -740,7 +837,7 @@ function rebuildBodyFromTris(body: Body, tris: Point[][]): boolean {
   return true;
 }
 
-function splitBody(world: World, body: Body, components: Point[][][]): boolean {
+function splitBody(world: World, body: Body, components: Point[][][]): Body[] {
   const ground = findGround(world);
   const snapshots = groupJoints([body])
     .filter(isSceneJoint)
@@ -805,7 +902,7 @@ function splitBody(world: World, body: Body, components: Point[][][]): boolean {
   }
 
   world.destroyBody(body);
-  return pieces.length > 0;
+  return pieces.map((piece) => piece.body);
 }
 
 function mapCutEnd(

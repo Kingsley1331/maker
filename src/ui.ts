@@ -54,7 +54,8 @@ export type ActiveTool =
   | { kind: "none" }
   | { kind: "shape"; shape: ShapeType }
   | { kind: "joint"; joint: JointType }
-  | { kind: "zoom" };
+  | { kind: "zoom" }
+  | { kind: "slice" };
 
 export interface UiOptions {
   onGravityChange(x: number, y: number): void;
@@ -396,6 +397,7 @@ export function setupUi({
 
   // Shape / joint tools (mutually exclusive)
   const zoomTool = requireElement<HTMLButtonElement>("zoom-tool");
+  const sliceTool = requireElement<HTMLButtonElement>("slice-tool");
   const sprayToggle = requireElement<HTMLButtonElement>("spray-toggle");
   const cutToggle = requireElement<HTMLButtonElement>("cut-toggle");
   const chainToggle = requireElement<HTMLButtonElement>("chain-toggle");
@@ -511,6 +513,9 @@ export function setupUi({
     zoomTool.setAttribute("aria-pressed", String(zoomOn));
     zoomRow.hidden = !zoomOn;
     zoomInput.disabled = !zoomOn;
+    const sliceOn = activeTool.kind === "slice";
+    sliceTool.classList.toggle("is-active", sliceOn);
+    sliceTool.setAttribute("aria-pressed", String(sliceOn));
     for (const button of shapeButtons) {
       button.classList.toggle(
         "is-active",
@@ -532,6 +537,14 @@ export function setupUi({
       return;
     }
     setActiveTool({ kind: "zoom" });
+  });
+
+  bindActivate(sliceTool, () => {
+    if (activeTool.kind === "slice") {
+      setActiveTool({ kind: "none" });
+      return;
+    }
+    setActiveTool({ kind: "slice" });
   });
 
   const settingsToggle = requireElement<HTMLButtonElement>("settings-toggle");

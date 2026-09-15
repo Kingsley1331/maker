@@ -150,7 +150,7 @@ const ui = setupUi({
   },
   onZoomChange: (zoom) => physics.setZoom(zoom),
   onToolChange: (tool) => {
-    if (tool.kind === "zoom") input.selection.deselect();
+    if (tool.kind === "zoom" || tool.kind === "slice") input.selection.deselect();
   },
   onDeleteSelection: () => {
     if (!physics.isPaused()) return;

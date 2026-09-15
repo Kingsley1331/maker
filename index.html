@@ -144,6 +144,20 @@
               <line x1="5" y1="19" x2="19" y2="5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" />
             </svg>
           </button>
+          <button
+            id="slice-tool"
+            class="shape-btn"
+            type="button"
+            title="Slice (drag a line)"
+            aria-label="Slice (drag a line)"
+            aria-pressed="false"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <polygon points="4,4 20,4 4,20" fill="currentColor" />
+              <polygon points="20,4 20,20 4,20" fill="currentColor" opacity="0.4" />
+              <line x1="4" y1="20" x2="20" y2="4" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+            </svg>
+          </button>
           <button class="shape-btn" data-shape="chain" title="Chain (click points)" aria-label="Chain">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <polyline
@@ -735,6 +749,11 @@
           <li>
             <strong>Edge tool:</strong> press empty space and drag to draw a static line that other
             shapes collide with. Click to place a short horizontal edge.
+          </li>
+          <li>
+            <strong>Slice:</strong> drag a line through filled shapes to split them. Every body the
+            line severs becomes separate pieces. Edges and chains are skipped. Click without
+            dragging does nothing.
           </li>
           <li>
             <strong>Polygon tool:</strong> click to add points and double-click to finish (at least 3

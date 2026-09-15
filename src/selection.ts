@@ -509,7 +509,7 @@ export function createSelection({
   }
 
   function alignmentOn(): boolean {
-    return !isCut() && !isSpray() && getActiveTool().kind !== "zoom";
+    return !isCut() && !isSpray() && getActiveTool().kind !== "zoom" && getActiveTool().kind !== "slice";
   }
 
   function holeTargets(around: Point) {
@@ -638,7 +638,7 @@ export function createSelection({
   // --- Rendering -------------------------------------------------------------------------------
 
   onAfterRender((ctx) => {
-    if (!selected || members.length === 0 || isCut()) return;
+    if (!selected || members.length === 0 || isCut() || getActiveTool().kind === "slice") return;
     const primary = selected;
     const r = boxRect();
     const zoom = getZoom();
@@ -870,6 +870,7 @@ export function createSelection({
       if (event.button !== 0 || members.length === 0) return;
       if (
         getActiveTool().kind === "zoom" ||
+        getActiveTool().kind === "slice" ||
         isSpray() ||
         isCut() ||
         isChainOutline()
@@ -959,6 +960,7 @@ export function createSelection({
     if (interaction !== "none" || event.buttons !== 0) return;
     if (
       getActiveTool().kind === "zoom" ||
+      getActiveTool().kind === "slice" ||
       isSpray() ||
       isCut() ||
       isChainOutline()
