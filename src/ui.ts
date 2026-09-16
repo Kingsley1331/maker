@@ -1471,13 +1471,20 @@ export function setupUi({
     selectionMerge.blur();
   });
   bindActivate(selectionDuplicate, () => {
+    if (selectionDuplicate.disabled) return;
     onDuplicateSelection();
     selectionDuplicate.blur();
   });
   bindActivate(selectionDelete, () => {
+    if (selectionDelete.disabled) return;
     onDeleteSelection();
     selectionDelete.blur();
   });
+
+  /** Delete acts on the selected body/group or, failing that, the selected joint. */
+  function syncDeleteButton(): void {
+    selectionDelete.disabled = selectionInfo.hidden && motorInfo.hidden;
+  }
 
   const motorDelete = requireElement<HTMLButtonElement>("motor-delete");
   bindActivate(motorDelete, () => {
@@ -1493,6 +1500,8 @@ export function setupUi({
     if (!body || members.length === 0) {
       selectionInfo.hidden = true;
       selectionMerge.disabled = true;
+      selectionDuplicate.disabled = true;
+      syncDeleteButton();
       return;
     }
     const isGroup = members.length > 1;
@@ -1507,7 +1516,9 @@ export function setupUi({
     selectionMerge.disabled = !mergeEnabled;
     selectionMerge.title = mergeEnabled
       ? "Merge overlapping shapes"
-      : "Overlap or touch another filled shape";
+      : "Merge: overlap or touch another filled shape";
+    selectionDuplicate.disabled = false;
+    syncDeleteButton();
     syncBodyTypeButtons(members);
     setCheckedIfUnfocused(
       wallsOnly,
@@ -1627,6 +1638,7 @@ export function setupUi({
     if (!joint) {
       motorInfo.hidden = true;
       motorStartRow.hidden = true;
+      syncDeleteButton();
       return;
     }
     const data = joint.getUserData() as JointUserData | undefined;
@@ -1634,9 +1646,11 @@ export function setupUi({
       motorInfo.hidden = true;
       motorStartRow.hidden = true;
       motorJoint = null;
+      syncDeleteButton();
       return;
     }
     motorInfo.hidden = false;
+    syncDeleteButton();
     motorInfo.scrollIntoView({ block: "nearest" });
     motorKind.textContent = jointKindLabel(data.kind);
     const motor = isMotorJoint(data.kind);
